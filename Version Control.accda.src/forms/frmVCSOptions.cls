@@ -689,7 +689,7 @@ Private Sub Form_Load()
     Set frmTableData = Me.sfrmTableData.Form
     With frmTableData.cboFormatType
         .RowSource = vbNullString
-        For intFormat = eTableDataExportFormat.etdNoData To eTableDataExportFormat.[_Last]
+        For intFormat = eTableDataExportFormat.etdNoData To eTableDataExportFormat.[_Last] - 1
             .AddItem intFormat & ";""" & Options.GetTableExportFormatName(intFormat) & """", intFormat
         Next intFormat
         Me.cboFormatTypeForOther.RowSource = .RowSource
@@ -699,7 +699,7 @@ Private Sub Form_Load()
     ' Load general sanitize options
     With Me.cboSanitizeLevel
         .RowSource = vbNullString
-        For intSanitizeLevel = 0 To (eSanitizeLevel.[_Last] - 1)
+        For intSanitizeLevel = eslMinimal To (eSanitizeLevel.[_Last] - 1)
             .AddItem intSanitizeLevel & ";" & Options.GetSanitizeLevelName(intSanitizeLevel)
         Next intSanitizeLevel
     End With
@@ -707,7 +707,7 @@ Private Sub Form_Load()
     ' Load color sanitize options
     With Me.cboSanitizeColors
         .RowSource = vbNullString
-        For intSanitizeLevel = 0 To (eSanitizeLevel.[_Last] - 1)
+        For intSanitizeLevel = eslNone To (eSanitizeLevel.[_Last] - 1)
             .AddItem intSanitizeLevel & ";" & Options.GetSanitizeLevelName(intSanitizeLevel)
         Next intSanitizeLevel
     End With
@@ -769,6 +769,13 @@ Private Sub MapControlsToOptions(eAction As eMapAction)
                                     ctl = Diff.ToolName
                                 Else
                                     Diff.ToolName = Nz(ctl)
+                                End If
+                            Case Me.cboOpenRepository.Name
+                                ' Also saved to registry
+                                If eAction = emaClassToForm Then
+                                    ctl = Nz2(GetSetting(PROJECT_NAME, "Options", "Open Repository Tool"), 0)
+                                Else
+                                    SaveSetting PROJECT_NAME, "Options", "Open Repository Tool", CStr(Nz(cboOpenRepository, 0))
                                 End If
                             Case Else
                                 ' Get option name from control name following prefix.

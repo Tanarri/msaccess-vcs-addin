@@ -313,6 +313,59 @@ End Function
 
 
 '---------------------------------------------------------------------------------------
+' Procedure : OpenRepository
+' Author    : Adam Waller
+' Date      : 2/8/2025
+' Purpose   : Open the configured tool for interacting with the repository.
+'           : (I.e GitHub Desktop or SourceTree)
+'---------------------------------------------------------------------------------------
+'
+Public Sub OpenRepository()
+
+    Dim strFolder As String
+    Dim strPath As String
+
+    ' Build quoted path to source folder
+    strFolder = """" & StripSlash(Options.GetExportFolder) & """"
+
+    ' Launch user-specified tool
+    Select Case Nz2(GetSetting(PROJECT_NAME, "Options", "Open Repository Tool"), 0)
+        Case eraUndefined
+            MsgBox2 "No Repository Tool Selected", _
+                "Please choose a program to launch in the add-in Options", _
+                "GitHub Desktop is a great choice for most users", vbInformation
+
+        Case eraGitHubDesktop
+            ' Open GitHub Desktop, and switch to the relevant repository.
+            ' Utilizes a built-in batch file installed as a part of GitHub Desktop
+            ShellEx "GitHub.bat", strFolder, , False
+
+        Case eraVSCode  ' Visual Studio Code
+            ShellEx "code", "--reuse-window " & strFolder, , False
+
+        Case eraSourceTree
+            ' Look up install path for SourceTree
+            strPath = RegRead("HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\SourceTree\InstallLocation")
+            ' Check install for all users
+            If strPath = vbNullString Then strPath = RegRead("HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\SourceTree\InstallLocation")
+            If Len(strPath) Then
+                Shell FSO.BuildPath(strPath, "SourceTree.exe") & " -f " & strFolder
+                AppActivate "Sourcetree", True  ' Try to switch to this window
+            Else
+                MsgBox2 "SourceTree Not Found", "Path to SourceTree.exe could not be found in the Windows Registry", , vbExclamation
+            End If
+
+        Case eraTortoiseGit
+            ShellEx "TortoiseGitProc.exe", "/path:" & strFolder
+            ' Could also go directly to commit:
+            'ShellEx "TortoiseGitProc.exe", "/command:commit /path:" & strFolder
+
+    End Select
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
 ' Procedure : OpenSourceFolder
 ' Author    : Adam Waller
 ' Date      : 4/1/2022
