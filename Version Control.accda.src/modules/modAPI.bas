@@ -109,6 +109,20 @@ End Function
 
 
 '---------------------------------------------------------------------------------------
+' Procedure : Preload
+' Author    : Adam Waller
+' Date      : 2/22/2025
+' Purpose   : A simple generic function that does nothing in particular, but allows
+'           : us to call it from external applications (i.e. Ribbon) to ensure that
+'           : the add-in has been loaded into Microsoft Access.
+'---------------------------------------------------------------------------------------
+'
+Public Function Preload()
+    ' Hello, Add-In!
+End Function
+
+
+'---------------------------------------------------------------------------------------
 ' Procedure : WorkerCallback
 ' Author    : Adam Waller
 ' Date      : 3/2/2023
@@ -170,12 +184,10 @@ Public Function RunInAddIn(strProcedure As String, blnUseTimer As Boolean, Optio
     ' When running code from the add-in project itself, it gets a little
     ' tricky because both the add-in and the currentdb have the same VBProject name.
     ' This means we can't just call `Run "MSAccessVCS.*" because it will run in
-    ' the local project instead of the add-in. To pull this off, we will temporarily
-    ' change the project name of the add-in so we can call it as distinct from the
-    ' current project.
+    ' the local project instead of the add-in. We can resolve this by using the
+    ' full path to the add-in library instead. (#593)
     Set projAddIn = GetAddInProject
     If RunningOnLocal Then
-        ' When this is run from the CurrentDB, we should rename the add-in project ... not required: call with full name
         strLibName = GetRunCmdAddInFullLibName
     Else
         strLibName = PROJECT_NAME
@@ -201,13 +213,21 @@ Public Function RunInAddIn(strProcedure As String, blnUseTimer As Boolean, Optio
 
 End Function
 
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetRunCmdAddInFullLibName
+' Author    : Josef Poetzl
+' Date      : 2/20/2025
+' Purpose   : Return the full path to the add-in library without the file extension.
+'---------------------------------------------------------------------------------------
+'
 Private Function GetRunCmdAddInFullLibName() As String
 
-   Const AddInFileExtension As String = ".accda"
-   Dim AddInFileName As String
+   Const cstrAddInFileExtension As String = ".accda"
+   Dim strAddInFileName As String
 
-   AddInFileName = GetAddInFileName
-   GetRunCmdAddInFullLibName = Left(AddInFileName, Len(AddInFileName) - Len(AddInFileExtension))
+   strAddInFileName = GetAddInFileName
+   GetRunCmdAddInFullLibName = Left(strAddInFileName, Len(strAddInFileName) - Len(cstrAddInFileExtension))
 
 End Function
 
@@ -215,7 +235,7 @@ End Function
 '---------------------------------------------------------------------------------------
 ' Procedure : ExampleLoadAddInAndRunExport
 ' Author    : Adam Waller
-' Date      : 11/13/2020
+' Date      : 2/21/2025
 ' Purpose   : This function can be copied to a local database and triggered with a
 '           : command line argument or other automation technique to load the VCS
 '           : add-in file and initiate an export.
@@ -224,54 +244,15 @@ End Function
 '---------------------------------------------------------------------------------------
 '
 Public Function ExampleLoadAddInAndRunExport()
-
-    Dim strAddInPath As String
-    Dim proj As Object      ' VBProject
-    Dim objAddIn As Object  ' VBProject
-
-    ' Build default add-in path
-    strAddInPath = Environ$("AppData") & "\MSAccessVCS\Version Control.accda"
-
-    ' See if add-in project is already loaded.
-    For Each proj In VBE.VBProjects
-        If StrComp(proj.FileName, strAddInPath, vbTextCompare) = 0 Then
-            Set objAddIn = proj
-        End If
-    Next proj
-
-    ' If not loaded, then attempt to load the add-in.
-    If objAddIn Is Nothing Then
-
-        ' The following lines will load the add-in at the application level,
-        ' but will not actually call the function. Ignore the error of function not found.
-        ' https://stackoverflow.com/questions/62270088/how-can-i-launch-an-access-add-in-not-com-add-in-from-vba-code
-        On Error Resume Next
-        Application.Run strAddInPath & "!DummyFunction"
-        On Error GoTo 0
-
-        ' See if it is loaded now...
-        For Each proj In VBE.VBProjects
-            If StrComp(proj.FileName, strAddInPath, vbTextCompare) = 0 Then
-                Set objAddIn = proj
-            End If
-        Next proj
-    End If
-
-    If objAddIn Is Nothing Then
-        MsgBox "Unable to load Version Control add-in. Please ensure that it has been installed" & vbCrLf & _
-            "and is functioning correctly. (It should be available in the Add-ins menu.)", vbExclamation
-    Else
-        ' Launch add-in export for current database.
-        Application.Run "MSAccessVCS.ExportSource", True
-    End If
-
+    Application.Run Environ$("AppData") & "\MSAccessVCS\Version Control" & _
+        ".HandleRibbonCommand", "btnExport"
 End Function
 
 
 '---------------------------------------------------------------------------------------
 ' Procedure : ExampleBuildFromSource
 ' Author    : Adam Waller
-' Date      : 9/6/2023
+' Date      : 2/21/2025
 ' Purpose   : This function can be copied to a local database and triggered with a
 '           : command line argument or other automation technique to load the VCS
 '           : add-in file and build this project from source.
@@ -279,49 +260,7 @@ End Function
 '           : and using the default file name.
 '---------------------------------------------------------------------------------------
 '
-Public Function ExampleBuildFromSource()
-
-    Dim strAddInPath As String
-    Dim proj As Object      ' VBProject
-    Dim objAddIn As Object  ' VBProject
-
-    ' Build default add-in path
-    strAddInPath = Environ$("AppData") & "\MSAccessVCS\Version Control.accda"
-
-    ' See if add-in project is already loaded.
-    For Each proj In VBE.VBProjects
-        If StrComp(proj.FileName, strAddInPath, vbTextCompare) = 0 Then
-            Set objAddIn = proj
-        End If
-    Next proj
-
-    ' If not loaded, then attempt to load the add-in.
-    If objAddIn Is Nothing Then
-
-        ' The following lines will load the add-in at the application level,
-        ' but will not actually call the function. Ignore the error of function not found.
-        ' https://stackoverflow.com/questions/62270088/how-can-i-launch-an-access-add-in-not-com-add-in-from-vba-code
-        On Error Resume Next
-        Application.Run strAddInPath & "!DummyFunction"
-        On Error GoTo 0
-
-        ' See if it is loaded now...
-        For Each proj In VBE.VBProjects
-            If StrComp(proj.FileName, strAddInPath, vbTextCompare) = 0 Then
-                Set objAddIn = proj
-            End If
-        Next proj
-    End If
-
-    If objAddIn Is Nothing Then
-        MsgBox "Unable to load Version Control add-in. Please ensure that it has been installed" & vbCrLf & _
-            "and is functioning correctly. (It should be available in the Add-ins menu.)", vbExclamation
-    Else
-        ' Set the application interaction level to silent to skip confirmation dialogs.
-        Application.Run "MSAccessVCS.SetInteractionMode", 1
-        ' Launch the build process (as if we clicked the button on the ribbon)
-        ' Optionally specify a specific folder of source files to build from.
-        Application.Run "MSAccessVCS.HandleRibbonCommand", "btnBuild" ', "c:\path\to\source\folder"
-    End If
-
+Public Function ExampleBuildFromSource(Optional strSourcePath As String)
+    Application.Run Environ$("AppData") & "\MSAccessVCS\Version Control" & _
+        ".HandleRibbonCommand", "btnBuild", strSourcePath
 End Function
