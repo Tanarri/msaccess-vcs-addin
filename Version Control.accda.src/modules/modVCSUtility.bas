@@ -191,23 +191,18 @@ End Function
 '
 Public Function ContainerHasObject(dContainer As Dictionary, intComponentType As eDatabaseComponentType) As Boolean
 
-    Dim cCategory As IDbComponent
     Dim dCategory As Dictionary
     Dim varKey As Variant
 
-    ' Loop through containers
-    For Each varKey In dContainer.Keys
-        If TypeOf varKey Is IDbComponent Then
-            Set cCategory = varKey
-            ' Look for matching component type
-            If cCategory.ComponentType = intComponentType Then
-                Set dCategory = dContainer(varKey)
-                If dCategory.Exists("Files") Then ContainerHasObject = (dCategory("Files").Count > 0)
-                If dCategory.Exists("Objects") Then ContainerHasObject = (dCategory("Objects").Count > 0)
-                Exit For
-            End If
-        End If
-    Next varKey
+    ' Get category (key) name of component type
+    varKey = GetComponentClass(intComponentType).Category
+
+    ' Check for any objects in this category
+    If dContainer.Exists(varKey) Then
+        Set dCategory = dContainer(varKey)
+        If dCategory.Exists("Files") Then ContainerHasObject = (dCategory("Files").Count > 0)
+        If dCategory.Exists("Objects") Then ContainerHasObject = (dCategory("Objects").Count > 0)
+    End If
 
 End Function
 
@@ -658,7 +653,7 @@ Public Function LoadComponentFromText(intType As AcObjectType _
 
     LogUnhandledErrors FunctionName
     On Error GoTo ErrHandler
-    Perf.OperationStart FunctionName
+    Perf.OperationStart "Load Component from Text"
 
 RetryImport:
     ' In most cases we are importing/converting the actual source file.
@@ -739,14 +734,14 @@ CleanUp:
     End If
 
     ' Check for VBA overlay
-    If blnVbaOverlay And Not Log.ErrorLevel = eelCritical Then ' don't do this if we're trying to bail out.
+    If blnVbaOverlay And Not Operation.ErrorLevel = eelCritical Then ' don't do this if we're trying to bail out.
         strPrefix = IIf(intType = acForm, "Form_", "Report_")
         OverlayCodeModule strPrefix & strName, SwapExtension(strFile, "cls")
     End If
 
 Exit_Here:
     ' Only set output to true when import and function didn't have any issues.
-    LoadComponentFromText = (Not blnErrInFunction) And (Not Log.ErrorLevel = eelCritical)
+    LoadComponentFromText = (Not blnErrInFunction) And (Not Operation.ErrorLevel = eelCritical)
     Perf.OperationEnd
     Exit Function
 
@@ -962,8 +957,9 @@ Public Function GetOriginalDbFullPathFromSource(strFolder As String) As String
                 If strPath <> vbNullString Then
                     strPath = strPath & PathSep & strFile
                 Else
-                    ' Unable to determine the original file location.
-                    Exit Function
+                    ' We may have a source path override in effect. Build in parent folder
+                    ' since the source does not specify an absolute build path.
+                    strPath = strExportFolder & PathSep & ".." & PathSep & strFile
                 End If
             Else
                 ' Calculate how many levels deep to create original path
@@ -1009,6 +1005,11 @@ Public Function BuildJsonFile(strClassName As String, dItems As Dictionary, strD
     Dim dContents As Dictionary
     Dim dHeader As Dictionary
 
+    ' Return empty string if we don't have any items in the dictionary.
+    ' (This also gives us an easy way to test the return value for items.)
+    If dItems.Count = 0 Then Exit Function
+
+    ' Create dictionary objects
     Set dContents = New Dictionary
     Set dHeader = New Dictionary
 
@@ -1185,7 +1186,6 @@ Public Sub ShiftOpenDatabase(strPath As String, Optional blnExclusive As Boolean
     If DatabaseFileOpen Then
         StageMainForm
         CloseCurrentDatabase2
-        DoCmd.OpenForm "frmVCSMain", , , , , acHidden
         RestoreMainForm
     End If
 
@@ -1223,6 +1223,7 @@ Error_Handler:
     With Err
         .Raise .Number, .Source, .Description, .HelpFile, .HelpContext
     End With
+
 End Sub
 
 

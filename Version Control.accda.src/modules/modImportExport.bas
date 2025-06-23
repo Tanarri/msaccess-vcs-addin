@@ -50,7 +50,6 @@ Public Sub ExportSource(blnFullExport As Boolean, Optional intFilter As eContain
     Set Options = Nothing
     Options.LoadProjectOptions
     Log.Clear
-    Log.OperationType = eotExport
     Log.SourcePath = Options.GetExportFolder
     Log.Active = True
     Perf.StartTiming
@@ -83,7 +82,7 @@ Public Sub ExportSource(blnFullExport As Boolean, Optional intFilter As eContain
         Log.Spacer
         Log.Add T("Export Canceled"), , , "Red", True
         Log.Flush
-        Log.ErrorLevel = eelCritical
+        Operation.ErrorLevel = eelCritical
         Exit Sub
     End If
 
@@ -100,7 +99,7 @@ Public Sub ExportSource(blnFullExport As Boolean, Optional intFilter As eContain
                     Log.Spacer
                     Log.Add T("Export Canceled"), , , "Red", True
                     Log.Flush
-                    Log.ErrorLevel = eelCritical
+                    Operation.ErrorLevel = eelCritical
                     Exit Sub
             End If
         Case evcOlderVersion
@@ -129,7 +128,7 @@ Public Sub ExportSource(blnFullExport As Boolean, Optional intFilter As eContain
 
     ' Export any external database schemas
     ExportSchemas blnFullExport
-    If Log.ErrorLevel = eelCritical Then GoTo CleanUp
+    If Operation.ErrorLevel = eelCritical Then GoTo CleanUp
 
     ' Finish header section
     Log.Spacer
@@ -147,6 +146,7 @@ Public Sub ExportSource(blnFullExport As Boolean, Optional intFilter As eContain
     Perf.OperationStart "Scan DB Objects"
     For Each cCategory In colCategories
         Perf.CategoryStart cCategory.Category
+        Operation.Pulse
         Set dCategory = New Dictionary
         dCategory.Add "Class", cCategory
         ' Get collection of database objects (IDbComponent classes)
@@ -164,7 +164,7 @@ Public Sub ExportSource(blnFullExport As Boolean, Optional intFilter As eContain
         ClearOrphanedSourceFiles cCategory
         Perf.CategoryEnd 0
         ' Handle critical error or cancel during scan
-        If Log.ErrorLevel = eelCritical Then
+        If Operation.ErrorLevel = eelCritical Then
             Log.Add vbNullString
             Perf.OperationEnd   ' Scan DB Objects
             GoTo CleanUp
@@ -185,7 +185,7 @@ Public Sub ExportSource(blnFullExport As Boolean, Optional intFilter As eContain
                 ' Cancel export
                 Log.Spacer
                 Log.Add T("Export Canceled"), , , "Red", True
-                Log.ErrorLevel = eelCritical
+                Operation.ErrorLevel = eelCritical
                 GoTo CleanUp
             End If
         End If
@@ -215,6 +215,7 @@ Public Sub ExportSource(blnFullExport As Boolean, Optional intFilter As eContain
                 ' Export object
                 Set cDbObject = dObjects(varKey)
                 Log.Add "  " & cDbObject.Name, Options.ShowDebug
+                Operation.Pulse
 
                 ' If we have already exported this object while scanning for changes, use that copy.
                 strTempFile = Replace(cDbObject.SourceFile, Options.GetExportFolder, VCSIndex.GetTempExportFolder)
@@ -230,7 +231,7 @@ Public Sub ExportSource(blnFullExport As Boolean, Optional intFilter As eContain
 
                 ' Bail out if we hit a critical error.
                 CatchAny eelError, T("Error exporting {0}", var0:=cDbObject.Name), ModuleName & ".ExportSource", True, True
-                If Log.ErrorLevel = eelCritical Then Log.Add vbNullString: GoTo CleanUp
+                If Operation.ErrorLevel = eelCritical Then Log.Add vbNullString: GoTo CleanUp
                 Log.Increment
 
                 ' Some kinds of objects are combined into a single export file, such
@@ -335,7 +336,6 @@ Public Sub ExportSingleObject(objItem As AccessObject, Optional frmMain As Form_
     Set Options = Nothing
     Options.LoadProjectOptions
     Log.Clear
-    Log.OperationType = eotExport
     Log.SourcePath = Options.GetExportFolder
     Log.Active = True
     Perf.StartTiming
@@ -385,7 +385,7 @@ Public Sub ExportSingleObject(objItem As AccessObject, Optional frmMain As Form_
                 ' Cancel export
                 Log.Spacer
                 Log.Add T("Export Canceled"), , , "Red", True
-                Log.ErrorLevel = eelCritical
+                Operation.ErrorLevel = eelCritical
                 GoTo CleanUp
             End If
         End If
@@ -406,6 +406,7 @@ Public Sub ExportSingleObject(objItem As AccessObject, Optional frmMain As Form_
             ' Export a fresh copy
             cDbObject.Export
         End If
+        ExportDependentObjects cDbObject
     End If
 
     ' Show final output and save log
@@ -505,7 +506,6 @@ Public Sub ExportMultipleObjects(objItems As Dictionary, Optional bolForceClose 
     Set Options = Nothing
     Options.LoadProjectOptions
     Log.Clear
-    Log.OperationType = eotExport
     Log.SourcePath = Options.GetExportFolder
     Log.Active = True
     Perf.StartTiming
@@ -574,7 +574,7 @@ Public Sub ExportMultipleObjects(objItems As Dictionary, Optional bolForceClose 
                 ' Cancel export
                 Log.Spacer
                 Log.Add T("Export Canceled"), , , "Red", True
-                Log.ErrorLevel = eelCritical
+                Operation.ErrorLevel = eelCritical
                 GoTo CleanUp
             End If
         End If
@@ -589,6 +589,7 @@ Public Sub ExportMultipleObjects(objItems As Dictionary, Optional bolForceClose 
             Set dObjects = dCategory.Item("Objects")
             For Each varObject In dObjects.Keys
                 Set cDbObject = dObjects.Item(varObject)
+                Operation.Pulse
 
                 ' If we have already exported this object while scanning for changes, use that copy.
                 strTempFile = Replace(cDbObject.SourceFile, Options.GetExportFolder, VCSIndex.GetTempExportFolder)
@@ -601,6 +602,7 @@ Public Sub ExportMultipleObjects(objItems As Dictionary, Optional bolForceClose 
                     ' Export a fresh copy
                     cDbObject.Export
                 End If
+                ExportDependentObjects cDbObject
             Next
         Next
     End If
@@ -625,6 +627,62 @@ CleanUp:
 
     ' Save index file (don't change export date for multiple items export)
     VCSIndex.Save
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ExportDependentObjects
+' Author    : Adam Waller
+' Date      : 6/18/2025
+' Purpose   : When exporting a selected object, it may be helpful to also export other
+'           : dependent objects. For example, when selecting a table, we may also want
+'           : to export table data (if applicable), and table data macros.
+'---------------------------------------------------------------------------------------
+'
+Private Sub ExportDependentObjects(cDbObject As IDbComponent)
+
+    Dim dObjects As Dictionary
+    Dim cCategory As IDbComponent
+    Dim cItem As IDbComponent
+    Dim varKey As Variant
+
+    ' Special cases based on component type
+    Select Case cDbObject.ComponentType
+        Case edbTableDef    ' Selected table
+
+            ' Table Data
+            Set cCategory = New clsDbTableData
+            Set dObjects = cCategory.GetAllFromDB(True)
+            For Each varKey In dObjects.Keys
+                Set cItem = dObjects(varKey)
+                If cItem.Name = cDbObject.Name Then
+                    ' Found matching name.
+                    cItem.Export
+                    Exit For
+                End If
+            Next varKey
+
+            ' Table Data Macro
+            Set cCategory = New clsDbTableDataMacro
+            Set dObjects = cCategory.GetAllFromDB(True)
+            For Each varKey In dObjects.Keys
+                Set cItem = dObjects(varKey)
+                If cItem.Name = cDbObject.Name Then
+                    ' Found matching name.
+                    cItem.Export
+                    Exit For
+                End If
+            Next varKey
+    End Select
+
+    ' Hidden attribute may apply to any selected object
+    Set cCategory = New clsDbHiddenAttribute
+    If cCategory.IsModified Then
+        ' Since we only store this property if the item is hidden, we should
+        ' export the hidden objects source file if any changes are detected.
+        cCategory.Export
+    End If
 
 End Sub
 
@@ -688,7 +746,7 @@ Public Sub ExportSchemas(blnFullExport As Boolean)
         Perf.CategoryEnd lngCount
 
         ' Check for error
-        If Log.ErrorLevel = eelCritical Then Exit For
+        If Operation.ErrorLevel = eelCritical Then Exit For
     Next varKey
     Perf.OperationEnd
 
@@ -702,8 +760,7 @@ End Sub
 ' Purpose   : Build the project from source files.
 '---------------------------------------------------------------------------------------
 '
-Public Sub Build(strSourceFolder As String _
-                , blnFullBuild As Boolean _
+Public Sub Build(strSourceFolder As String, blnFullBuild As Boolean _
                 , Optional intFilter As eContainerFilter = ecfAllObjects _
                 , Optional strAlternatePath As String)
 
@@ -785,14 +842,25 @@ Public Sub Build(strSourceFolder As String _
         End If
     End If
 
-    ' For full builds, close the current database if it is currently open.
-    If blnFullBuild Then
-        If DatabaseFileOpen Then
+    ' Additional checks when a database is currently open.
+    If DatabaseFileOpen Then
+        ' For full builds, close the current database if it is currently open.
+        If blnFullBuild Then
+            ' Attempt to close the current database after staging the main form
+            If IsLoaded(acForm, "frmVCSMain") Then StageMainForm
             CloseCurrentDatabase2
+            ' If the database file was open in exclusive mode (such as after a build)
+            ' we might have to call this function a second time to actually close the file.
+            If DatabaseFileOpen Then CloseCurrentDatabase2
+            ' If the database is still open, then we have a problem that we can't resolve here.
             If DatabaseFileOpen Then
                 MsgBox2 T("Unable to Close Database"), _
                     T("The current database must be closed to perform a full build."), , vbExclamation
+                Operation.Result = eorFailed
                 GoTo CleanUp
+            Else
+                ' Restore main form as we continue the build
+                RestoreMainForm
             End If
         End If
     End If
@@ -800,8 +868,9 @@ Public Sub Build(strSourceFolder As String _
     ' Load options from project
     Set Options = Nothing
     Options.LoadOptionsFromFile StripSlash(strSourceFolder) & PathSep & "vcs-options.json"
-    ' Override the export folder when exporting to an alternate path.
-    If Len(strAlternatePath) Then Options.ExportFolder = strSourceFolder
+    ' Temporarily override the export folder to always read files from the specified source folder.
+    ' (This is needed if the source folder is renamed, or when building to an alternate file.)
+    Options.ExportFolder = strSourceFolder
 
     ' Update VBA debug mode after loading options
     LogUnhandledErrors FunctionName
@@ -830,14 +899,15 @@ Public Sub Build(strSourceFolder As String _
         ' close and shift-open the database before merging source files into it.
         Log.Add T("Closing and reopening current database before merge...")
         Perf.OperationStart "Reopen DB before Merge"
+        StageMainForm
         CloseCurrentDatabase2
         ShiftOpenDatabase strPath
+        RestoreMainForm
         Perf.OperationEnd
     End If
 
     ' Start log and performance timers
     Log.Clear
-    Log.OperationType = IIf(blnFullBuild, eotBuild, eotMerge)
     Log.SourcePath = strSourceFolder
     Log.Active = True
     Perf.StartTiming
@@ -871,8 +941,8 @@ Public Sub Build(strSourceFolder As String _
                     vbNewLine & "Would you like to continue anyway?" _
                 , var0:=Options.GetLoadedVersion, var1:=GetVCSVersion), _
             T("Click YES to continue this operation, or NO to cancel."), _
-            vbExclamation + vbYesNo + vbDefaultButton2) <> vbYes Then
-            Log.ErrorLevel = eelCritical
+            vbExclamation + vbYesNo + vbDefaultButton2, , vbYes) <> vbYes Then
+            Operation.ErrorLevel = eelCritical
             GoTo CleanUp
         End If
     End If
@@ -936,6 +1006,7 @@ Public Sub Build(strSourceFolder As String _
     For Each cCategory In GetContainers(intFilter)
         Set dCategory = New Dictionary
         dCategory.Add "Class", cCategory
+        Operation.Pulse
         ' Get collection of source files
         If blnFullBuild Then
             ' Return all the source files
@@ -966,7 +1037,7 @@ Public Sub Build(strSourceFolder As String _
             End If
         End If
         ' Check for critical error or cancel
-        If Log.ErrorLevel = eelCritical Then
+        If Operation.ErrorLevel = eelCritical Then
             Log.Add vbNullString
             Perf.OperationEnd
             GoTo CleanUp
@@ -986,7 +1057,7 @@ Public Sub Build(strSourceFolder As String _
                 ' Cancel build/merge
                 Log.Spacer
                 Log.Add T("Build Canceled")
-                Log.ErrorLevel = eelCritical
+                Operation.ErrorLevel = eelCritical
                 GoTo CleanUp
             End If
         End If
@@ -1026,6 +1097,7 @@ Public Sub Build(strSourceFolder As String _
             ' Import/merge the file
             Log.Increment
             Log.Add "  " & FSO.GetFileName(varFile), Options.ShowDebug
+            Operation.Pulse
             If blnFullBuild Then
                 cCategory.Import CStr(varFile)
             Else
@@ -1035,7 +1107,7 @@ Public Sub Build(strSourceFolder As String _
                 var0:=varFile), FunctionName, True, True
 
             ' Bail out if we hit a critical error.
-            If Log.ErrorLevel = eelCritical Then Log.Add vbNullString: GoTo CleanUp
+            If Operation.ErrorLevel = eelCritical Then Log.Add vbNullString: GoTo CleanUp
 
         Next varFile
 
@@ -1079,6 +1151,10 @@ Public Sub Build(strSourceFolder As String _
         InitializeForms dCategories
     End If
 
+    ' Update operation result in case this is queried in the AfterBuild hooks
+    ' Assume success if we have not jumped to the cleanup.
+    Operation.Result = eorSuccess
+
     ' Run any post-build/merge instructions
     If blnFullBuild Then
         If Options.RunAfterBuild <> vbNullString Then
@@ -1119,7 +1195,7 @@ CleanUp:
     End With
 
     ' Show message if build failed
-    If Log.ErrorLevel = eelCritical Or Not blnSuccess Then
+    If Operation.ErrorLevel = eelCritical Or Not blnSuccess Then
         Log.Spacer
         Log.Add T("Build Failed."), , , "red", True
         Log.Flush
@@ -1147,6 +1223,9 @@ CleanUp:
         VCSIndex.Save strSourceFolder
     End If
     Set VCSIndex = Nothing
+
+    ' Wait to finish the build till after we have saved the index.
+    Operation.Finish
 
     ' Show MessageBox if not using GUI for build.
     If Forms.Count = 0 And blnSuccess Then
@@ -1197,7 +1276,6 @@ Public Sub LoadSingleObject(cComponentClass As IDbComponent, strName As String, 
     Set Options = Nothing
     Options.LoadProjectOptions
     Log.Clear
-    Log.OperationType = eotMerge
     Log.SourcePath = Options.GetExportFolder
     Log.Active = True
     Perf.StartTiming
@@ -1242,7 +1320,7 @@ Public Sub LoadSingleObject(cComponentClass As IDbComponent, strName As String, 
                 ' Cancel export
                 Log.Spacer
                 Log.Add T("Import Canceled"), , , "Red", True
-                Log.ErrorLevel = eelCritical
+                Operation.ErrorLevel = eelCritical
                 GoTo CleanUp
             End If
         End If
@@ -1257,6 +1335,7 @@ Public Sub LoadSingleObject(cComponentClass As IDbComponent, strName As String, 
 
         ' Replace the existing object with the source file
         cComponentClass.Merge strSourceFilePath
+        MergeDependentObjects cComponentClass, strName
     End If
 
     ' Show final output and save log
@@ -1279,6 +1358,53 @@ CleanUp:
 
     ' Save index file (don't change export date for single item export)
     VCSIndex.Save
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : MergeDependentObjects
+' Author    : Adam Waller
+' Date      : 6/18/2025
+' Purpose   : Merge in any dependent objects related to the selected object.
+'           : (I.e. table data for a selected table)
+'---------------------------------------------------------------------------------------
+'
+Private Sub MergeDependentObjects(cComponentClass As IDbComponent, strName As String)
+
+    Dim cItem As clsDbTableData
+    Dim strFile As String
+    Dim intFormat As eTableDataExportFormat
+
+    ' Special cases based on component type
+    Select Case cComponentClass.ComponentType
+
+        ' Table object
+        Case edbTableDef
+
+            ' Table Data
+            Set cItem = New clsDbTableData
+            If Options.TablesToExportData.Exists(strName) Then
+                ' Convert string format option to enum value
+                intFormat = Options.GetTableExportFormat(dNZ(Options.TablesToExportData, strName & "\Format"))
+                If intFormat > etdNoData Then
+                    ' Set a reference to the table object so the table data class can build the source file name.
+                    Set cItem.Parent.DbObject = CurrentData.AllTables(strName)
+                    cItem.Format = intFormat
+                    strFile = cItem.Parent.SourceFile
+                    If FSO.FileExists(strFile) Then
+                        Log.Add T("Importing table data for {0}", , , , strName), Options.ShowDebug
+                        cItem.Parent.Import strFile
+                    End If
+                End If
+            End If
+
+            ' Table Data Macro
+            ' (Already loaded with table definition)
+    End Select
+
+    ' Could consider merging hidden attribute here if requested.
+    ' (We don't need to add the complexity unless there is an actual need for this.)
 
 End Sub
 
@@ -1313,7 +1439,6 @@ Public Sub MergeAllSource()
     Set Options = Nothing
     Options.LoadProjectOptions
     Log.Clear
-    Log.OperationType = eotMerge
     Log.SourcePath = Options.GetExportFolder
     Log.Active = True
     Perf.StartTiming
@@ -1343,7 +1468,7 @@ Public Sub MergeAllSource()
         Log.Spacer
         Log.Add T("Merge Canceled"), , , "Red", True
         Log.Flush
-        Log.ErrorLevel = eelCritical
+        Operation.ErrorLevel = eelCritical
         Exit Sub
     End If
 
@@ -1383,11 +1508,12 @@ Public Sub MergeAllSource()
                 ' Import/merge the file
                 Log.Increment
                 Log.Add "  " & FSO.GetFileName(varFile), Options.ShowDebug
+                Operation.Pulse
                 cCategory.Merge CStr(varFile)
                 CatchAny eelError, T("Merge error in: {0}", var0:=varFile), ModuleName & ".MergeAllSource", True, True
 
                 ' Bail out if we hit a critical error.
-                If Log.ErrorLevel = eelCritical Then Log.Add vbNullString: GoTo CleanUp
+                If Operation.ErrorLevel = eelCritical Then Log.Add vbNullString: GoTo CleanUp
             Next varFile
 
             ' Show category wrap-up.
@@ -1634,11 +1760,11 @@ End Sub
 '           : imported into the database. (All object types)
 '---------------------------------------------------------------------------------------
 '
-Public Sub InitializeForms(cContainers As Dictionary)
+Public Sub InitializeForms(dContainers As Dictionary)
 
-    Dim cont As IDbComponent
     Dim frm As IDbComponent
-    Dim dForms As Dictionary
+    Dim dFiles As Dictionary
+    Dim dAllForms As Dictionary
     Dim cAllForms As IDbComponent
     Dim varKey As Variant
 
@@ -1647,45 +1773,49 @@ Public Sub InitializeForms(cContainers As Dictionary)
     On Error Resume Next
 
     ' See if we imported any forms
-    For Each cont In cContainers
-        If cont.ComponentType = edbForm Then
+    Set cAllForms = New clsDbForm
+    If dContainers.Exists(cAllForms.Category) Then
 
-            ' Loop through the forms in the current database
-            Set cAllForms = New clsDbForm
-            Set dForms = cAllForms.GetAllFromDB
-            Log.ProgMax = dForms.Count
-            For Each varKey In dForms.Keys
+        ' Get reference to forms container
+        Set dFiles = dContainers(cAllForms.Category)("Files")
+        Log.ProgMax = dFiles.Count
 
-                ' See if this form matches one of the files we just imported
-                Set frm = dForms(varKey)
-                If cContainers(cont)("Files").Exists(frm.SourceFile) Then
+        ' Loop through the forms in the current database
+        Set dAllForms = cAllForms.GetAllFromDB
+        For Each varKey In dAllForms.Keys
 
-                    ' Don't attempt to initialize add-in main form
-                    ' (Likely not needed, and would require staging)
-                    If frm.Name <> "frmVCSMain" Then
+            ' See if this form matches one of the files we just imported
+            Set frm = dAllForms(varKey)
+            If dFiles.Exists(frm.SourceFile) Then
 
-                        ' Open each form in design view
-                        Perf.OperationStart "Initialize Forms"
-                        DoCmd.OpenForm frm.Name, acDesign, , , , acHidden
-                        DoEvents
-                        DoCmd.Close acForm, frm.Name, acSaveNo
-                        Perf.OperationEnd
-                    End If
-                    Log.Increment
+                ' Don't attempt to initialize add-in main form
+                ' (Likely not needed, and would require staging)
+                If frm.Name <> "frmVCSMain" Then
 
-                    ' Log any errors
-                    CatchAny eelError, T("Error while initializing form {0}", var0:=frm.Name), ModuleName & ".InitializeForms"
-
-                    ' Update the index, since the save date has changed, but reuse the code hash
-                    ' since we just calculated it after importing the form.
-                    With VCSIndex.Item(frm)
-                        VCSIndex.Update frm, eatImport, .FileHash, .OtherHash
-                    End With
-
+                    ' Open the form in design view to initialize layout, colors and theme
+                    Perf.OperationStart "Initialize Forms"
+                    Log.Add "  " & frm.Name, Options.ShowDebug
+                    DoCmd.OpenForm frm.Name, acDesign, , , , acHidden
+                    DoEvents
+                    ' We seem to get the benefit of the layout rendering even if we don't
+                    ' save the form, so let's not save it unless we identify a reason to.
+                    DoCmd.Close acForm, frm.Name, acSaveNo
+                    Perf.OperationEnd
                 End If
-            Next varKey
-        End If
-    Next cont
+                Log.Increment
+
+                ' Log any errors
+                CatchAny eelError, T("Error while initializing form {0}", var0:=frm.Name), ModuleName & ".InitializeForms"
+
+                ' Update the index, since the save date may have changed, but reuse the code hash
+                ' since we just calculated it after importing the form.
+                With VCSIndex.Item(frm)
+                    VCSIndex.Update frm, eatImport, .FileHash, .OtherHash
+                End With
+
+            End If
+        Next varKey
+    End If
 
     ' Check for any unhandled errors
     CatchAny eelError, "Unhandled error while initializing forms", ModuleName & ".InitializeForms"

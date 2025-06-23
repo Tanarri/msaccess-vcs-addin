@@ -37,7 +37,11 @@ Implements IDbComponent
 Private Sub IDbComponent_Export(Optional strAlternatePath As String)
     Dim strContent As String
     strContent = GetSource
-    WriteFile strContent, Nz2(strAlternatePath, IDbComponent_SourceFile)
+    If strContent = vbNullString Then
+        If FSO.FileExists(IDbComponent_SourceFile) Then DeleteFile IDbComponent_SourceFile
+    Else
+        WriteFile strContent, Nz2(strAlternatePath, IDbComponent_SourceFile)
+    End If
     VCSIndex.Update Me, IIf(strAlternatePath = vbNullString, eatExport, eatAltExport), GetStringHash(strContent, True)
 End Sub
 
@@ -103,7 +107,10 @@ Private Sub IDbComponent_Merge(strFile As String)
     ' Remove any document properties that don't exist in the incoming file,
     ' then import the file.
     Set dFile = ReadJsonFile(strFile)
-    If dFile Is Nothing Then Set dFile = New Dictionary
+    If dFile Is Nothing Then
+        Set dFile = New Dictionary
+        Set dFile("Items") = New Dictionary
+    End If
     RemoveMissing dFile("Items"), GetDictionary
 
     ' Import if file exists
@@ -194,7 +201,6 @@ End Function
 '
 Public Function GetDictionary(Optional blnUseCache As Boolean = True) As Dictionary
 
-    Dim dItems As Dictionary
     Dim dCont As Dictionary
     Dim cont As DAO.Container
     Dim doc As DAO.Document
@@ -210,7 +216,7 @@ Public Function GetDictionary(Optional blnUseCache As Boolean = True) As Diction
     End If
 
     ' Create dictionary object to hold all the items
-    Set dItems = New Dictionary
+    Set m_dItems = New Dictionary
     Set dbs = CurrentDb
 
     ' Errors should not typically occur
@@ -237,11 +243,11 @@ Public Function GetDictionary(Optional blnUseCache As Boolean = True) As Diction
                 End If
             End If
         Next doc
-        If colItems.Count > 0 Then dItems.Add cont.Name, SortCollectionByValue(colItems)
+        If colItems.Count > 0 Then m_dItems.Add cont.Name, SortCollectionByValue(colItems)
     Next cont
 
     ' Return assembled dictionary
-    Set GetDictionary = dItems
+    Set GetDictionary = m_dItems
 
 End Function
 
@@ -255,26 +261,36 @@ End Function
 '
 Private Sub RemoveMissing(dMaster As Dictionary, dTarget As Dictionary)
 
-    Dim dCont As Dictionary
     Dim dbs As Database
+    Dim colItems As Collection
     Dim contType As AcObjectType
     Dim varCont As Variant
     Dim varDoc As Variant
     Dim strDoc As String
+    Dim blnRemove As Boolean
 
     ' Go through target dictionary, removing the flag that doesn't exist
     ' in the master dictionary.
     Set dbs = CurrentDb
     For Each varCont In dTarget.Keys
-        Set dCont = dTarget(varCont)
+        Set colItems = dTarget(varCont)
         contType = GetObjectTypeFromContainer(dbs.Containers(varCont))
-        For Each varDoc In dCont.Keys
+        For Each varDoc In colItems
             strDoc = CStr(varDoc)
             If contType <> acDefault _
                 And Not (contType = acTable _
                 And (strDoc Like "MSys*" Or strDoc Like "~*")) Then
+                    ' Check the master dictionary (incoming file) for a match
+                    ' Set flag to remove unless we find a match
+                    blnRemove = True
+                    If dMaster.Exists(varCont) Then
+                        blnRemove = Not InCollection(dMaster(varCont), strDoc)
+                    End If
                     ' Unset the Hidden Attribute property (only exposed here)
-                    Application.SetHiddenAttribute contType, strDoc, False
+                    If blnRemove Then
+                        Log.Add T("Removing hidden attribute from {0}", var0:=strDoc), Options.ShowDebug
+                        Application.SetHiddenAttribute contType, strDoc, False
+                    End If
             End If
         Next varDoc
     Next varCont
@@ -319,7 +335,7 @@ End Function
 '
 Private Function IDbComponent_GetFileList() As Dictionary
     Set IDbComponent_GetFileList = New Dictionary
-    If FSO.FileExists(IDbComponent_SourceFile) Then IDbComponent_GetFileList.Add IDbComponent_SourceFile, vbNullString
+    IDbComponent_GetFileList.Add IDbComponent_SourceFile, vbNullString
 End Function
 
 

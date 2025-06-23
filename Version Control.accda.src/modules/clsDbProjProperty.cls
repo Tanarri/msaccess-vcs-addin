@@ -38,7 +38,11 @@ Implements IDbComponent
 Private Sub IDbComponent_Export(Optional strAlternatePath As String)
     Dim strContent As String
     strContent = GetSource
-    WriteFile strContent, Nz2(strAlternatePath, IDbComponent_SourceFile)
+    If strContent = vbNullString Then
+        If FSO.FileExists(IDbComponent_SourceFile) Then DeleteFile IDbComponent_SourceFile
+    Else
+        WriteFile strContent, Nz2(strAlternatePath, IDbComponent_SourceFile)
+    End If
     VCSIndex.Update Me, IIf(strAlternatePath = vbNullString, eatExport, eatAltExport), GetStringHash(strContent, True)
 End Sub
 
@@ -123,7 +127,10 @@ Private Sub IDbComponent_Merge(strFile As String)
     ' Remove any document properties that don't exist in the incoming file,
     ' then import the file.
     Set dFile = ReadJsonFile(strFile)
-    If dFile Is Nothing Then Set dFile = New Dictionary
+    If dFile Is Nothing Then
+        Set dFile = New Dictionary
+        Set dFile("Items") = New Dictionary
+    End If
     RemoveMissing dFile("Items"), GetDictionary
 
     ' Import if file exists
@@ -158,7 +165,6 @@ End Function
 Private Function GetDictionary(Optional blnUseCache As Boolean) As Dictionary
 
     Dim prp As AccessObjectProperty
-    Dim dCollection As Dictionary
 
     ' Check cache parameter
     If blnUseCache And Not m_dItems Is Nothing Then
@@ -167,7 +173,7 @@ Private Function GetDictionary(Optional blnUseCache As Boolean) As Dictionary
         Exit Function
     End If
 
-    Set dCollection = New Dictionary
+    Set m_dItems = New Dictionary
 
     ' Loop through all properties
     For Each prp In CurrentProject.Properties
@@ -178,14 +184,15 @@ Private Function GetDictionary(Optional blnUseCache As Boolean) As Dictionary
                 ' Legacy properties no longer needed.
             Case "AppIcon"
                 ' ADP projects may have this property
-                dCollection.Add prp.Name, GetRelativePath(CStr(prp.Value))
+                m_dItems.Add prp.Name, GetRelativePath(CStr(prp.Value))
             Case Else
-                dCollection.Add prp.Name, prp.Value
+                m_dItems.Add prp.Name, prp.Value
         End Select
     Next prp
 
     ' Return sorted dictionary
-    Set GetDictionary = SortDictionaryByKeys(dCollection)
+    Set m_dItems = SortDictionaryByKeys(m_dItems)
+    Set GetDictionary = m_dItems
 
 End Function
 
@@ -270,7 +277,7 @@ End Function
 '
 Private Function IDbComponent_GetFileList() As Dictionary
     Set IDbComponent_GetFileList = New Dictionary
-    If FSO.FileExists(IDbComponent_SourceFile) Then IDbComponent_GetFileList.Add IDbComponent_SourceFile, vbNullString
+    IDbComponent_GetFileList.Add IDbComponent_SourceFile, vbNullString
 End Function
 
 

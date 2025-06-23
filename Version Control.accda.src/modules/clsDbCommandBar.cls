@@ -20,7 +20,6 @@ Option Explicit
 Private m_TemplateCommandBar As CommandBar
 Private m_CommandBar As CommandBar
 Private m_Items(True To False) As Dictionary
-Private m_dItems As Dictionary
 Private m_FileList As Dictionary
 
 Private Type udtThis
@@ -162,11 +161,7 @@ End Sub
 Private Sub BuildControls(dParent As Dictionary, objItem As Object)
 
     Dim varProp As Variant
-    Dim varCtl As Variant
     Dim dControl As Dictionary
-    Dim varValue As Variant
-    Dim varCtlProp As Variant
-    Dim colItems As Collection
     Dim picItem As IPictureDisp
     Dim strBasePath As String
     Dim strPath As String
@@ -311,7 +306,7 @@ End Function
 ' Purpose   : Return a dictionary object of project properties.
 '---------------------------------------------------------------------------------------
 '
-Private Function GetDictionary(Optional blnUseCache As Boolean = True) As Dictionary
+Private Function GetDictionary() As Dictionary
     Dim dParent As Dictionary
     Set dParent = New Dictionary
     Set this.dImages = New Dictionary
@@ -331,9 +326,7 @@ End Function
 Private Function BuildElementDictionary(dParent As Dictionary, objItem As Object) As Dictionary
 
     Dim varProp As Variant
-    Dim varCtl As Variant
     Dim varValue As Variant
-    Dim varCtlProp As Variant
     Dim colItems As Collection
     Dim picItem As IPictureDisp
     Dim strPath As String
@@ -449,7 +442,6 @@ End Function
 '
 Private Function GetImagePath(ctl As CommandBarControl) As String
 
-    Dim objParent As Object
     Dim ctlTest As Object
     Dim strName As String
     Dim strSegment As String
@@ -749,7 +741,14 @@ End Property
 '---------------------------------------------------------------------------------------
 '
 Private Sub Class_Initialize()
-    'm_Count = -1
+
+    ' Note that in some cases the template may not be immediately available, such as
+    ' when building the add-in from source multiple times, which can call the
+    ' CloseCurrentDatabase2 a second time to close a database currently open in
+    ' exclusive mode. The template is loaded through an AfterBuild hook at the
+    ' completion of the build, so this doesn't present a problem for the add-in.
+    LogUnhandledErrors
+    On Error Resume Next
 
     ' We assume the add-in file already has the template command bar included. If it doesn't, then
     ' we will have problem importing Access' custom built-in buttons.
@@ -850,6 +849,7 @@ Private Sub Class_Initialize()
         .Add "Visible"
         .Add "Width"
     End With
+
 End Sub
 
 

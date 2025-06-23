@@ -37,7 +37,11 @@ Implements IDbComponent
 Private Sub IDbComponent_Export(Optional strAlternatePath As String)
     Dim strContent As String
     strContent = GetSource
-    WriteFile strContent, Nz2(strAlternatePath, IDbComponent_SourceFile)
+    If strContent = vbNullString Then
+        If FSO.FileExists(IDbComponent_SourceFile) Then DeleteFile IDbComponent_SourceFile
+    Else
+        WriteFile strContent, Nz2(strAlternatePath, IDbComponent_SourceFile)
+    End If
     VCSIndex.Update Me, IIf(strAlternatePath = vbNullString, eatExport, eatAltExport), GetStringHash(strContent, True)
 End Sub
 
@@ -231,7 +235,6 @@ Private Function GetDictionary(Optional blnUseCache As Boolean) As Dictionary
     Dim dGroup As Dictionary
     Dim colObjects As Collection
     Dim dObject As Dictionary
-    Dim dItems As Dictionary
 
     ' Check cache parameter
     If blnUseCache And Not m_dItems Is Nothing Then
@@ -247,7 +250,7 @@ Private Function GetDictionary(Optional blnUseCache As Boolean) As Dictionary
     ' Open query in the current db
     Set dbs = CurrentDb
     Set rst = dbs.OpenRecordset(strSql)
-    Set dItems = New Dictionary
+    Set m_dItems = New Dictionary
     Set colCategories = New Collection
 
     ' Loop through records
@@ -316,12 +319,12 @@ Private Function GetDictionary(Optional blnUseCache As Boolean) As Dictionary
         If strCategory <> vbNullString Then
             dCategory.Add "Groups", colGroups
             colCategories.Add dCategory
-            dItems.Add "Categories", colCategories
+            m_dItems.Add "Categories", colCategories
         End If
     End With
 
     ' Return dictionary
-    Set GetDictionary = dItems
+    Set GetDictionary = m_dItems
 
 End Function
 
@@ -430,7 +433,7 @@ End Function
 '
 Private Function IDbComponent_GetFileList() As Dictionary
     Set IDbComponent_GetFileList = New Dictionary
-    If FSO.FileExists(IDbComponent_SourceFile) Then IDbComponent_GetFileList.Add IDbComponent_SourceFile, vbNullString
+    IDbComponent_GetFileList.Add IDbComponent_SourceFile, vbNullString
 End Function
 
 

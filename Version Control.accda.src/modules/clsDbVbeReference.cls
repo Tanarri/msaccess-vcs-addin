@@ -38,7 +38,11 @@ Implements IDbComponent
 Private Sub IDbComponent_Export(Optional strAlternatePath As String)
     Dim strContent As String
     strContent = GetSource
-    WriteFile strContent, Nz2(strAlternatePath, IDbComponent_SourceFile)
+    If strContent = vbNullString Then
+        If FSO.FileExists(IDbComponent_SourceFile) Then DeleteFile IDbComponent_SourceFile
+    Else
+        WriteFile strContent, Nz2(strAlternatePath, IDbComponent_SourceFile)
+    End If
     VCSIndex.Update Me, IIf(strAlternatePath = vbNullString, eatExport, eatAltExport), GetStringHash(strContent, True)
 End Sub
 
@@ -167,9 +171,9 @@ Private Function GetDictionary(Optional blnUseCache As Boolean) As Dictionary
 
     Set proj = CurrentVBProject
     Set dNames = New Dictionary
-    Set GetDictionary = New Dictionary
+    Set m_dItems = New Dictionary
 
-    With GetDictionary
+    With m_dItems
         ' Loop through cached references (Duplicates have already been removed)
         For Each ref In proj.References
             If Not ref.BuiltIn Then
@@ -210,6 +214,9 @@ Private Function GetDictionary(Optional blnUseCache As Boolean) As Dictionary
             End If
         Next ref
     End With
+
+    ' Return dictionary of references
+    Set GetDictionary = m_dItems
 
 End Function
 
@@ -361,7 +368,7 @@ End Function
 '
 Private Function IDbComponent_GetFileList() As Dictionary
     Set IDbComponent_GetFileList = New Dictionary
-    If FSO.FileExists(IDbComponent_SourceFile) Then IDbComponent_GetFileList.Add IDbComponent_SourceFile, vbNullString
+    IDbComponent_GetFileList.Add IDbComponent_SourceFile, vbNullString
 End Function
 
 
