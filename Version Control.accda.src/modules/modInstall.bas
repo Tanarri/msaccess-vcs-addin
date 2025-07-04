@@ -29,6 +29,7 @@ Private Const mcstrTrustedLocationName = PROJECT_NAME & " Version Control"
 Public Type udtInstallSettings
     blnTrustAddInFolder As Boolean
     blnUseRibbonAddIn As Boolean
+    blnUseCompiledAddIn As Boolean
     blnOpenAfterInstall As Boolean
     strInstallFolder As String
     blnSettingsLoaded As Boolean
@@ -100,6 +101,7 @@ Public Sub InstallVCSAddin(blnTrustFolder As Boolean, blnUseRibbon As Boolean, b
     GetInstallSettings
     With this
         .blnUseRibbonAddIn = blnUseRibbon
+        .blnUseCompiledAddIn = blnCreateCompiledVersion
         .blnOpenAfterInstall = blnOpenAfterInstall
         .blnTrustAddInFolder = blnTrustFolder
         If .strInstallFolder <> strInstallFolder Then
@@ -265,6 +267,8 @@ End Sub
 '
 Private Function UpdateAddInFile(ByVal blnCreateCompiledVersion As Boolean) As Boolean
 
+    Dim strPath As String
+
     ' Make sure the destination folder exists
     VerifyPath GetAddInFileName
 
@@ -274,9 +278,17 @@ Private Function UpdateAddInFile(ByVal blnCreateCompiledVersion As Boolean) As B
     If FSO.FileExists(GetAddInFileName) Then DeleteFile GetAddInFileName, True
 
     If blnCreateCompiledVersion Then
-        CreateAccde CodeProject.FullName, GetAddInFileName
+        ' Remove any existing uncompiled version
+        ' (Very important, since we are invoking the add-in file directly without the extension.
+        ' if both files exist, the .accda file will be opened instead of the compiled one.)
+        If FSO.FileExists(GetAddInFileName) Then DeleteFile GetAddInFileName
+        ' Now we can generate the compiled version as a *.accde
+        CreateAccde CodeProject.FullName, GetAddInFileName(True)
     Else
         FSO.CopyFile CodeProject.FullName, GetAddInFileName, True
+        ' Remove any existing compiled version
+        strPath = GetAddInFileName(True)
+        If FSO.FileExists(strPath) Then DeleteFile strPath
     End If
 
     If Err Then
@@ -312,9 +324,10 @@ Private Sub CreateAccde(ByVal strSourceFilePath As String, ByVal strDestFilePath
     ' use new Access instance to create accde
     With New Access.Application
         .Visible = True
-        .SysCmd acSysCmdCompile, (strFileToCompile), (strDestFilePath)
+        .SysCmd acSysCmdCompile, strFileToCompile, strDestFilePath
     End With
 
+    ' Delete temporary file
     FSO.DeleteFile strFileToCompile, True
 
 End Sub
@@ -374,8 +387,9 @@ End Sub
 ' Purpose   : This is where the add-in would be installed.
 '---------------------------------------------------------------------------------------
 '
-Public Function GetAddInFileName() As String
-    GetAddInFileName = FSO.BuildPath(GetInstallSettings.strInstallFolder, CodeProject.Name)
+Public Function GetAddInFileName(Optional blnAsMde As Boolean = False) As String
+    GetAddInFileName = FSO.BuildPath(GetInstallSettings.strInstallFolder, _
+        FSO.GetBaseName(CodeProject.Name) & IIf(blnAsMde, ".accde", ".accda"))
 End Function
 
 
@@ -681,6 +695,7 @@ Public Function GetInstallSettings(Optional blnUseCache As Boolean = True) As ud
         If Not (.blnSettingsLoaded And blnUseCache) Then
             .blnTrustAddInFolder = GetSetting(PROJECT_NAME, "Install", "Trust Folder", CInt(True))
             .blnUseRibbonAddIn = GetSetting(PROJECT_NAME, "Install", "Use Ribbon", True)
+            .blnUseCompiledAddIn = GetSetting(PROJECT_NAME, "Install", "Compile accde", False)
             .blnOpenAfterInstall = GetSetting(PROJECT_NAME, "Install", "Open File", CInt(False))
             .strInstallFolder = GetSetting(PROJECT_NAME, "Install", "Install Folder", DefaultAddInFolderPath)
             .blnSettingsLoaded = True
@@ -703,6 +718,7 @@ Public Function SaveInstallSettings()
         ' Basic settings
         SaveSetting PROJECT_NAME, "Install", "Trust Folder", CInt(.blnTrustAddInFolder)
         SaveSetting PROJECT_NAME, "Install", "Use Ribbon", CInt(.blnUseRibbonAddIn)
+        SaveSetting PROJECT_NAME, "Install", "Compile accde", CInt(.blnUseCompiledAddIn)
         SaveSetting PROJECT_NAME, "Install", "Open File", CInt(.blnOpenAfterInstall)
         ' Special handling
         If .strInstallFolder = DefaultAddInFolderPath Then

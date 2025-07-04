@@ -211,6 +211,21 @@ End Function
 
 
 '---------------------------------------------------------------------------------------
+' Procedure : OpenForm2
+' Author    : Adam Waller
+' Date      : 6/24/2025
+' Purpose   : Wrapper function to open a form in the current database instead of
+'           : the add-in when called using the correct method.
+'---------------------------------------------------------------------------------------
+'
+Public Function OpenForm2(FormName, Optional View As AcFormView = acNormal, Optional FilterName, _
+    Optional WhereCondition, Optional DataMode As AcFormOpenDataMode = acFormPropertySettings, _
+    Optional WindowMode As AcWindowMode = acWindowNormal, Optional OpenArgs)
+    DoCmd.OpenForm FormName, View, FilterName, WhereCondition, DataMode, WindowMode, OpenArgs
+End Function
+
+
+'---------------------------------------------------------------------------------------
 ' Procedure : IsLoaded
 ' Author    : Adam Waller
 ' Date      : 9/22/2017
@@ -526,15 +541,16 @@ End Function
 '           : current project, not the add-in file.
 '---------------------------------------------------------------------------------------
 '
-Public Sub RunSubInCurrentProject(strSubName As String, Optional blnStageOperation As Boolean = True)
+Public Sub RunSubInCurrentProject(strSubName As String)
 
+    Dim strSub As String
     Dim strCmd As String
 
     ' Don't need the parentheses after the sub name
-    strCmd = Replace(strSubName, "()", vbNullString)
+    strSub = Replace(strSubName, "()", vbNullString)
 
     ' Make sure we are not trying to run a function with arguments
-    If InStr(strCmd, "(") > 0 Then
+    If InStr(strSub, "(") > 0 Then
         MsgBox2 T("Unable to Run Command"), _
             T("Parameters are not supported for this command."), _
             T("If you need to use parameters, please create a wrapper sub or function with" & vbCrLf & _
@@ -543,29 +559,41 @@ Public Sub RunSubInCurrentProject(strSubName As String, Optional blnStageOperati
     End If
 
     ' Make sure procedure exists in current database
-    If Not GlobalProcExists(strSubName) Then
-        Log.Error eelError, T("The procedure ""{0}"" not found.", var0:=strSubName), ModuleName & ".RunSubInCurrentProject"
+    If Not GlobalProcExists(strSub) Then
+        Log.Error eelError, T("The procedure ""{0}"" not found.", var0:=strSub), ModuleName & ".RunSubInCurrentProject"
         Log.Add T("The procedure must be declared as public in a standard module."), False
         Exit Sub
     End If
 
-    ' Add project name so we can run it from the current datbase
-    strCmd = "[" & CurrentVBProject.Name & "]." & strCmd
-
-    ' Check for add-in project name
-    If StrComp(CurrentVBProject.Name, GetAddInProject.Name, vbTextCompare) = 0 Then
-        ' Temporarily rename the add-in project so the sub runs in the current project ... Not required: call with full name
-        Dim VbProjectFilenameWithoutFileExt As String
-        Const AddInFileExtension As String = ".accda"
-        With CurrentVBProject
-            VbProjectFilenameWithoutFileExt = Left(.FileName, Len(.FileName) - Len(AddInFileExtension))
-            strCmd = Replace(strCmd, "[" & .Name & "]", VbProjectFilenameWithoutFileExt)
+    ' Build call syntax
+    If CurrentVBProject.Name = PROJECT_NAME Then
+        ' use full path
+        ' Example: Run "c:\full\path\Version Control.SubName"
+        With CurrentProject
+            strCmd = .Path & PathSep & FSO.GetBaseName(.Name) & "." & strSub
         End With
+    Else
+        ' use library name
+        ' Example: Run "[VBProject].SubName"
+        strCmd = "[" & CurrentVBProject.Name & "]." & strSub
     End If
 
+    ' Log any outstanding errors
+    LogUnhandledErrors
+
+    ' Stage the current operation, and run the sub
     Operation.Stage
+    Perf.OperationStart T("Run {0}", , , , strSub)
+
+    ' Set active VB project to Current DB (not Add-in)
+    Set VBE.ActiveVBProject = CurrentVBProject
+
     Application.Run strCmd
+    Perf.OperationEnd
     Operation.Restore
+
+    ' Log any other errors
+    CatchAny eelError, T("Error running {0}", , , , strSub), ModuleName & ".RunSubInCurrentProject"
 
 End Sub
 

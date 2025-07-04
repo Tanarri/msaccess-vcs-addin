@@ -1159,6 +1159,7 @@ Public Sub Build(strSourceFolder As String, blnFullBuild As Boolean _
     If blnFullBuild Then
         If Options.RunAfterBuild <> vbNullString Then
             Log.Add T("Running {0}...", var0:=Options.RunAfterBuild)
+            Log.Flush
             Perf.OperationStart "RunAfterBuild"
             RunSubInCurrentProject Options.RunAfterBuild
             Perf.OperationEnd
@@ -1167,6 +1168,7 @@ Public Sub Build(strSourceFolder As String, blnFullBuild As Boolean _
         ' Merge build
         If Options.RunAfterMerge <> vbNullString Then
             Log.Add T("Running {0}...", Options.RunAfterMerge)
+            Log.Flush
             Perf.OperationStart "RunAfterMerge"
             RunSubInCurrentProject Options.RunAfterMerge
             Perf.OperationEnd
@@ -1767,6 +1769,7 @@ Public Sub InitializeForms(dContainers As Dictionary)
     Dim dAllForms As Dictionary
     Dim cAllForms As IDbComponent
     Dim varKey As Variant
+    Dim blnIsAddin As Boolean
 
     ' Trap any errors that may occur when opening forms
     LogUnhandledErrors
@@ -1775,6 +1778,9 @@ Public Sub InitializeForms(dContainers As Dictionary)
     ' See if we imported any forms
     Set cAllForms = New clsDbForm
     If dContainers.Exists(cAllForms.Category) Then
+
+        ' Are we working on the add-in project itself?
+        blnIsAddin = (CurrentVBProject.Name = PROJECT_NAME)
 
         ' Get reference to forms container
         Set dFiles = dContainers(cAllForms.Category)("Files")
@@ -1795,7 +1801,11 @@ Public Sub InitializeForms(dContainers As Dictionary)
                     ' Open the form in design view to initialize layout, colors and theme
                     Perf.OperationStart "Initialize Forms"
                     Log.Add "  " & frm.Name, Options.ShowDebug
-                    DoCmd.OpenForm frm.Name, acDesign, , , , acHidden
+                    If blnIsAddin Then
+                        OpenFormInCurrentDb frm.Name, acDesign, , , , acHidden
+                    Else
+                        DoCmd.OpenForm frm.Name, acDesign, , , , acHidden
+                    End If
                     DoEvents
                     ' We seem to get the benefit of the layout rendering even if we don't
                     ' save the form, so let's not save it unless we identify a reason to.
@@ -1819,5 +1829,32 @@ Public Sub InitializeForms(dContainers As Dictionary)
 
     ' Check for any unhandled errors
     CatchAny eelError, "Unhandled error while initializing forms", ModuleName & ".InitializeForms"
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : OpenFormInCurrentDb
+' Author    : Adam Waller
+' Date      : 6/24/2025
+' Purpose   : Open a form from the current database instead of the add-in, when forms
+'           : with the same names exist in both places.
+'           : IMPORTANT: Note that FilterName and WhereCondition have been changed from
+'           : Variant to String so that the subsequent arguments are not discarded in
+'           : the call to Application.Run. (It appears that once a missing argument is
+'           : identified, all subsequent arguments are ignored.)
+'---------------------------------------------------------------------------------------
+'
+Private Sub OpenFormInCurrentDb(FormName, Optional View As AcFormView = acNormal, Optional FilterName As String, _
+    Optional WhereCondition As String, Optional DataMode As AcFormOpenDataMode = acFormPropertySettings, _
+    Optional WindowMode As AcWindowMode = acWindowNormal, Optional OpenArgs)
+
+    Dim strCmd As String
+
+    ' Build out command
+    strCmd = CurrentProject.Path & PathSep & FSO.GetBaseName(CurrentProject.Name) & ".OpenForm2"
+
+    ' Run in current database, passing in all parameters
+    Application.Run strCmd, FormName, View, FilterName, WhereCondition, DataMode, WindowMode, OpenArgs
 
 End Sub
