@@ -561,7 +561,7 @@ Public Function SaveComponentAsText(intType As AcObjectType _
 
             ' Sanitizing converts to UTF-8
             With cParser
-                .LoadString strContent
+                .LoadString strContent, intType
                 .ObjectName = FSO.GetBaseName(strFile)
                 WriteFile .Sanitize(ectObjectDefinition), strFile
                 strHash = .Hash
@@ -638,7 +638,8 @@ End Function
 '
 Public Function LoadComponentFromText(intType As AcObjectType _
                                     , ByRef strName As String _
-                                    , ByRef strFile As String) As Boolean
+                                    , ByRef strFile As String _
+                                    , Optional blnSuppressError As Boolean = False) As Boolean
 
     Const FunctionName As String = ModuleName & ".LoadComponentFromText"
 
@@ -653,7 +654,7 @@ Public Function LoadComponentFromText(intType As AcObjectType _
 
     LogUnhandledErrors FunctionName
     On Error GoTo ErrHandler
-    Perf.OperationStart "Load Component from Text"
+    Perf.OperationStart FunctionName
 
 RetryImport:
     ' In most cases we are importing/converting the actual source file.
@@ -666,7 +667,7 @@ RetryImport:
             ' Read file content. (Should be UTF-8)
             strContent = ReadFile(strFile)
             With New clsSourceParser
-                .LoadString strContent
+                .LoadString strContent, intType
 
                 ' Check for print settings file
                 strAltFile = SwapExtension(strFile, "json")
@@ -715,15 +716,15 @@ RetryImport:
             ' Other objects converted to UCS2
             ConvertUtf8Ucs2 strSourceFile, strTempFile, False
         End If
-        Perf.OperationStart "App.LoadFromText()"
-        Application.LoadFromText intType, strName, strTempFile
+        Perf.OperationStart "modLoadFromText.LoadFromText"
+        modLoadFromText.LoadFromText intType, strName, strTempFile
         Perf.OperationEnd
         DeleteFile strTempFile, True
 
     Else
         ' Load UTF-8 file
-        Perf.OperationStart "App.LoadFromText()"
-        Application.LoadFromText intType, strName, strSourceFile
+        Perf.OperationStart "modLoadFromText.LoadFromText"
+        modLoadFromText.LoadFromText intType, strName, strSourceFile
         Perf.OperationEnd
     End If
 
@@ -746,8 +747,19 @@ Exit_Here:
     Exit Function
 
 ErrHandler:
+    Dim strErrDescription As String
+    strErrDescription = Err.Description
+    Err.Clear ' FIXME: A temporary hack to avoid spurious output in logs when calling Log.Error
+
+    If blnSuppressError Then
+        ' Generate warning entries for suppressed errors
+        Log.Error eelWarning, T("Import issue with '{0}'; {1}", var0:=strName, var1:=strErrDescription), FunctionName
+        blnErrInFunction = True
+        Resume CleanUp
+    End If
+
     ' Issue importing form. We need to prompt user to see if we continue on or not.
-    Log.Error eelError, T("Import issue with '{0}'", var0:=strName), FunctionName
+    Log.Error eelError, T("Import issue with '{0}'; {1}", var0:=strName, var1:=strErrDescription), FunctionName
 
     Select Case MsgBox2(T("Could not import '{0}'.", var0:=strName) _
             , T("Abort build, retry importing, or skip?") _
@@ -759,7 +771,7 @@ ErrHandler:
     Case vbAbort
         Log.Error eelCritical, "Aborted build.", FunctionName
         blnErrInFunction = True
-        GoTo CleanUp
+        Resume CleanUp
 
     Case vbRetry
         Log.Add T("Retrying import for: {0}", var0:=strName)
@@ -796,7 +808,7 @@ Public Sub ExportCodeModule(strName As String, strFile As String)
 
     ' Sanitize the VBA code while reading the temp file
     With New clsSourceParser
-        .LoadString ReadFile(strTempFile, GetSystemEncoding)
+        .LoadString ReadFile(strTempFile, GetSystemEncoding), edbModule
         strContent = .Sanitize(ectVBA)
     End With
 
