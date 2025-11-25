@@ -1109,6 +1109,12 @@ Public Sub Build(strSourceFolder As String, blnFullBuild As Boolean _
                 cCategory.Import CStr(varFile)
             Else
                 cCategory.Merge CStr(varFile)
+                If Options.ExportAfterMerge Then
+                    ' Merging imports the object, which then makes it available
+                    ' to export from this category/object class.
+                    ' (Forms are exported later after initializing)
+                    If cCategory.ComponentType <> edbForm Then cCategory.Export
+                End If
             End If
             CatchAny eelError, T(IIf(blnFullBuild, "Build error in: {0}", "Merge error in: {0}"), _
                 var0:=varFile), FunctionName, True, True
@@ -1264,6 +1270,7 @@ Public Sub LoadSingleObject(cComponentClass As IDbComponent, strName As String, 
     Dim dCategories As Dictionary
     Dim dCategory As Dictionary
     Dim dSourceFiles As Dictionary
+    Dim intResult As eOperationResult
 
     ' Guard clauses
     If cComponentClass Is Nothing Then Exit Sub
@@ -1333,6 +1340,7 @@ Public Sub LoadSingleObject(cComponentClass As IDbComponent, strName As String, 
                 Log.Spacer
                 Log.Add T("Import Canceled"), , , "Red", True
                 Operation.ErrorLevel = eelCritical
+                intResult = eorCanceled
                 GoTo CleanUp
             End If
         End If
@@ -1353,6 +1361,7 @@ Public Sub LoadSingleObject(cComponentClass As IDbComponent, strName As String, 
     ' Show final output and save log
     Log.Spacer
     Log.Add T("Done. ({0} seconds)", var0:=Round(Perf.TotalTime, 2)), , False, "green", True
+    intResult = eorSuccess
 
 CleanUp:
 
@@ -1370,6 +1379,7 @@ CleanUp:
 
     ' Save index file (don't change export date for single item export)
     VCSIndex.Save
+    Operation.Finish intResult
 
 End Sub
 
@@ -1834,6 +1844,10 @@ Public Sub InitializeForms(dContainers As Dictionary)
                     VCSIndex.Update frm, eatImport, .FileHash, .OtherHash
                 End With
 
+                ' For merge operations, we might be also exporting after initializing
+                If Operation.OperationType = eotMerge And Options.ExportAfterMerge Then
+                    frm.Export
+                End If
             End If
         Next varKey
     End If

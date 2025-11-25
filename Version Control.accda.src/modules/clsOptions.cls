@@ -24,6 +24,7 @@ Public ExportFolder As String
 Public ShowDebug As Boolean
 Public UseFastSave As Boolean
 Public UseMergeBuild As Boolean
+Public ExportAfterMerge As Boolean
 Public UseGitIntegration As Boolean
 Public GitSettings As Dictionary
 Public SavePrintVars As Boolean
@@ -32,6 +33,7 @@ Public SaveQuerySQL As Boolean
 Public FormatSQL As Boolean
 Public ForceImportOriginalQuerySQL As Boolean
 Public SaveTableSQL As Boolean
+Public SaveLinkedTableDef As Boolean
 Public SplitLayoutFromVBA As Boolean
 Public StripPublishOption As Boolean
 Public SanitizeColors As eSanitizeLevel
@@ -82,9 +84,11 @@ Public Sub LoadDefaults()
         .ShowDebug = False
         .UseFastSave = True
         .UseMergeBuild = False
+        .ExportAfterMerge = False
         .UseGitIntegration = False
         .SavePrintVars = True
         .SaveQuerySQL = True
+        .SaveLinkedTableDef = False
         .FormatSQL = True
         .ForceImportOriginalQuerySQL = False
         .SaveTableSQL = True
@@ -744,6 +748,7 @@ Private Sub Class_Initialize()
         .Add "ShowDebug"
         .Add "UseFastSave"
         .Add "UseMergeBuild"
+        .Add "ExportAfterMerge"
         .Add "UseGitIntegration"
         .Add "SavePrintVars"
         .Add "ExportPrintSettings"
@@ -751,6 +756,7 @@ Private Sub Class_Initialize()
         .Add "FormatSQL"
         .Add "ForceImportOriginalQuerySQL"
         .Add "SaveTableSQL"
+        .Add "SaveLinkedTableDef"
         .Add "SplitLayoutFromVBA"
         .Add "StripPublishOption"
         .Add "SanitizeColors"
