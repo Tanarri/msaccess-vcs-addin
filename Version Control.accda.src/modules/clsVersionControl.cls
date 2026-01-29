@@ -64,6 +64,18 @@ End Sub
 
 
 '---------------------------------------------------------------------------------------
+' Procedure : FullExport
+' Author    : Adam Waller
+' Date      : 1/26/2026
+' Purpose   : Force a full export of all objects (ignoring Fast Save)
+'---------------------------------------------------------------------------------------
+'
+Public Sub FullExport()
+    RunExport ecfAllObjects, , True
+End Sub
+
+
+'---------------------------------------------------------------------------------------
 ' Procedure : ExportVBA
 ' Author    : Adam Waller
 ' Date      : 4/1/2022
@@ -106,7 +118,7 @@ End Sub
 ' Purpose   : Handle different kinds of exports based on filter
 '---------------------------------------------------------------------------------------
 '
-Private Sub RunExport(Optional intFilter As eContainerFilter = ecfAllObjects, Optional objItem As AccessObject)
+Private Sub RunExport(Optional intFilter As eContainerFilter = ecfAllObjects, Optional objItem As AccessObject, Optional blnFullExport As Boolean = False)
     DoCmd.OpenForm "frmVCSMain", , , , , acHidden
     With Form_frmVCSMain
         If objItem Is Nothing Then
@@ -114,6 +126,8 @@ Private Sub RunExport(Optional intFilter As eContainerFilter = ecfAllObjects, Op
         Else
             Set .objSingleObject = objItem
         End If
+        ' Set full export checkbox if requested
+        If blnFullExport Then .chkFullExport = True
         .Visible = True
         .cmdExport_Click
         If Operation.ErrorLevel < eelError Then .AutoClose
@@ -381,7 +395,7 @@ End Sub
 '---------------------------------------------------------------------------------------
 '
 Public Sub OpenExportLog()
-    OpenLog "Export.log"
+    OpenLog "Export"
 End Sub
 
 
@@ -393,7 +407,7 @@ End Sub
 '---------------------------------------------------------------------------------------
 '
 Public Sub OpenBuildLog()
-    OpenLog "Build.log"
+    OpenLog "Build"
 End Sub
 
 
@@ -401,19 +415,36 @@ End Sub
 ' Procedure : OpenLog
 ' Author    : Adam Waller
 ' Date      : 4/1/2022
-' Purpose   : Open a log file by name, or show a message if the file is not found.
+' Purpose   : Open the most recent log file matching the base name (e.g., "Export")
 '---------------------------------------------------------------------------------------
 '
-Private Sub OpenLog(strName As String)
+Private Sub OpenLog(strBaseName As String)
 
+    Dim strFolder As String
     Dim strPath As String
+    Dim oFolder As Object
+    Dim oFile As Object
+    Dim strNewest As String
 
-    strPath = Options.GetExportFolder & strName
-    If FSO.FileExists(strPath) Then
+    ' Look in the logs subfolder
+    strFolder = FSO.BuildPath(Options.GetExportFolder, "logs")
+
+    If FSO.FolderExists(strFolder) Then
+        Set oFolder = FSO.GetFolder(strFolder)
+        ' Find the most recent file matching pattern (alphabetical = chronological with timestamp naming)
+        For Each oFile In oFolder.Files
+            If oFile.Name Like strBaseName & "_*.log" Then
+                If oFile.Path > strNewest Then strNewest = oFile.Path
+            End If
+        Next oFile
+    End If
+
+    If Len(strNewest) > 0 Then
         ' Note that the parentheses around the path are required for this to work.
-        CreateObject("Shell.Application").Open (strPath)
+        CreateObject("Shell.Application").Open (strNewest)
     Else
-        MsgBox2 "Log File Not Found", "Could not find the following file in the export location:", strPath, vbExclamation
+        strPath = FSO.BuildPath(strFolder, strBaseName & "_*.log")
+        MsgBox2 "Log File Not Found", "Could not find any log files matching:", strPath, vbExclamation
     End If
 
 End Sub
@@ -501,6 +532,133 @@ End Sub
 Public Property Get Version() As String
     Version = GetVCSVersion
 End Property
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetVCSVersion
+' Author    : Adam Waller
+' Date      : 1/22/2026
+' Purpose   : Return the version of this (CodeDB) instance of VCS.
+'           : Public method for external API access (e.g., via API function).
+'---------------------------------------------------------------------------------------
+'
+Public Function GetVCSVersion() As String
+    GetVCSVersion = modVCSUtility.GetVCSVersion
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetExportFolder
+' Author    : Adam Waller
+' Date      : 1/22/2026
+' Purpose   : Return the current export folder path for the project.
+'           : Public method for external API access (e.g., via API function).
+'---------------------------------------------------------------------------------------
+'
+Public Function GetExportFolder() As String
+    GetExportFolder = Options.GetExportFolder
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : IsDatabaseOpen
+' Author    : Adam Waller
+' Date      : 1/22/2026
+' Purpose   : Return whether a database file is currently open.
+'           : Public method for external API access (e.g., via API function).
+'---------------------------------------------------------------------------------------
+'
+Public Function IsDatabaseOpen() As Boolean
+    IsDatabaseOpen = modDatabase.DatabaseFileOpen
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetProjectName
+' Author    : Adam Waller
+' Date      : 1/22/2026
+' Purpose   : Return the name of the currently open project/database.
+'           : Returns empty string if no database is open.
+'           : Public method for external API access (e.g., via API function).
+'---------------------------------------------------------------------------------------
+'
+Public Function GetProjectName() As String
+    If modDatabase.DatabaseFileOpen Then
+        GetProjectName = CurrentProject.Name
+    Else
+        GetProjectName = vbNullString
+    End If
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : IsVBACompiled
+' Author    : Adam Waller
+' Date      : 1/26/2026
+' Purpose   : Check if the VBA project is in a compiled state.
+'           : Returns True if compiled, False otherwise.
+'           : Public method for external API access (e.g., via API function).
+'---------------------------------------------------------------------------------------
+'
+Public Function IsVBACompiled() As Boolean
+    On Error Resume Next
+    ' Application.IsCompiled returns True if project is compiled, False if not
+    IsVBACompiled = Application.IsCompiled
+    On Error GoTo 0
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : CompileVBA
+' Author    : Adam Waller
+' Date      : 1/26/2026
+' Purpose   : Compile all VBA modules in the current database and return success status.
+'           : Returns True if compilation succeeded (project is compiled), False if failed.
+'           : Public method for external API access (e.g., via API function).
+'---------------------------------------------------------------------------------------
+'
+Public Function CompileVBA(Optional blnSuppressWarnings As Boolean = False) As Boolean
+    On Error GoTo ErrHandler
+
+    Dim blnCompiledAfter As Boolean
+
+    ' Suppress warnings if requested (we'll restore them in cleanup)
+    If blnSuppressWarnings Then
+        DoCmd.SetWarnings False
+    End If
+
+    ' Make sure we are running this in the CurrentDB, not the CodeDB
+    Set VBE.ActiveVBProject = CurrentVBProject
+
+    ' Compile all modules
+    DoCmd.RunCommand acCmdCompileAllModules
+    DoEvents
+
+    ' Check if compilation succeeded by checking IsCompiled
+    On Error Resume Next
+    blnCompiledAfter = Application.IsCompiled
+    On Error GoTo ErrHandler
+
+    ' Restore warnings if we suppressed them
+    If blnSuppressWarnings Then
+        DoCmd.SetWarnings True
+    End If
+
+    ' Return True if compiled, False if not
+    CompileVBA = blnCompiledAfter
+    Exit Function
+
+ErrHandler:
+    ' Always restore warnings if we suppressed them, even on error
+    If blnSuppressWarnings Then
+        On Error Resume Next
+        DoCmd.SetWarnings True
+        On Error GoTo 0
+    End If
+
+    ' Return False on any error
+    CompileVBA = False
+End Function
 
 
 '---------------------------------------------------------------------------------------

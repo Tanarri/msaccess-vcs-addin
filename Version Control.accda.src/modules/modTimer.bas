@@ -37,10 +37,16 @@ Public Sub WinAPITimerCallback()
     strParam1 = GetSetting(PROJECT_NAME, "Timer", "Param1")
     strParam2 = GetSetting(PROJECT_NAME, "Timer", "Param2")
 
+    ' Read callback info before clearing (needed for APIAsyncOperation)
+    Dim strCallbackInfo As String
+    strCallbackInfo = GetSetting(PROJECT_NAME, "Timer", "CallbackInfo")
+    MCPDebugLog "WinAPITimerCallback: Command=" & strCommand & ", CallbackInfo length=" & Len(strCallbackInfo)
+
     ' Clear values from registry (In case an operation sets another timer)
     SaveSetting PROJECT_NAME, "Timer", "Operation", vbNullString
     SaveSetting PROJECT_NAME, "Timer", "Param1", vbNullString
     SaveSetting PROJECT_NAME, "Timer", "Param2", vbNullString
+    SaveSetting PROJECT_NAME, "Timer", "CallbackInfo", vbNullString
 
     ' Unstage the current operation
     If Operation.Status = eosStaged Then Operation.Restore
@@ -54,6 +60,10 @@ Public Sub WinAPITimerCallback()
         Case "Build"
             ' Build from source (full or merge build)
             Build strParam1, CBool(strParam2)
+
+        Case "APIAsyncOperation"
+            ' Handle async operation with MCP callbacks
+            HandleAPIAsyncOperation strParam1, strParam2, strCallbackInfo
 
         Case Else
             ' Use the Run command to execute the specified operation with supplied parameters
@@ -116,4 +126,70 @@ Private Sub KillTimer()
         m_lngTimerID = 0
         SaveSetting PROJECT_NAME, "Timer", "TimerID", 0
     End If
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : HandleAPIAsyncOperation
+' Author    : Adam Waller
+' Date      : 1/23/2026
+' Purpose   : Handle async operation with MCP callbacks. Reads callback info from
+'           : registry, registers with MCP, then starts the operation.
+'---------------------------------------------------------------------------------------
+'
+Private Sub HandleAPIAsyncOperation(strMethod As String, strArgs As String, strCallbackInfo As String)
+
+    On Error GoTo ErrHandler
+
+    Dim strArg1 As String
+    Dim strArg2 As String
+    Dim lngPipePos As Long
+
+    ' Register callback with MCP if provided
+    MCPDebugLog "HandleAPIAsyncOperation: Method=" & strMethod & ", CallbackInfo length=" & Len(strCallbackInfo)
+    If Len(strCallbackInfo) > 0 Then
+        MCPDebugLog "HandleAPIAsyncOperation: Registering callback..."
+        MCP.RegisterCallback strCallbackInfo
+        MCPDebugLog "HandleAPIAsyncOperation: MCP.IsActive=" & MCP.IsActive
+        Operation.Source = eosMCPTool
+    Else
+        MCPDebugLog "HandleAPIAsyncOperation: No callback info, using External API source"
+        Operation.Source = eosExternalAPI
+    End If
+
+    ' Parse arguments (format: "arg1|arg2" or just "arg1")
+    If Len(strArgs) > 0 Then
+        lngPipePos = InStr(strArgs, "|")
+        If lngPipePos > 0 Then
+            strArg1 = Left(strArgs, lngPipePos - 1)
+            strArg2 = Mid(strArgs, lngPipePos + 1)
+        Else
+            strArg1 = strArgs
+        End If
+    End If
+
+    ' Start the operation via API
+    ' Log.Add automatically routes to MCP when MCP.IsActive
+    If Len(strArg2) > 0 Then
+        API strMethod, strArg1, strArg2
+    ElseIf Len(strArg1) > 0 Then
+        API strMethod, strArg1
+    Else
+        API strMethod
+    End If
+
+    ' Completion callback is now sent from Operation.Finish() before ReleaseObjects
+    MCPDebugLog "HandleAPIAsyncOperation: Operation complete, Result=" & Operation.Result
+
+    Exit Sub
+
+ErrHandler:
+    ' Post error callback if MCP is active
+    If MCP.IsActive Then
+        MCP.PostCallback "error", -1, -1, strMethod & " failed: " & Err.Description
+    End If
+
+    ' Re-throw error
+    Err.Raise Err.Number, Err.Source, Err.Description, Err.HelpFile, Err.HelpContext
+
 End Sub
