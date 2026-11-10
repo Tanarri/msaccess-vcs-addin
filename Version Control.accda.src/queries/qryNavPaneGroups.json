@@ -1,0 +1,15 @@
+﻿{
+  "Info": {
+    "Class": "clsDbQuery",
+    "Description": "qryNavPaneGroups"
+  },
+  "Items": {
+    "QueryType": 0,
+    "Columns": {
+      "GroupName": {
+        "ColumnWidth": 2085,
+        "AggregateType": -1
+      }
+    }
+  }
+}

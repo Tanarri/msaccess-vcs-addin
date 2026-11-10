@@ -1,0 +1,49 @@
+﻿Operation =6
+Option =0
+Where ="(((qryCars.Manufacturer)=\"BMW\" Or (qryCars.Manufacturer)=\"Audi\"))"
+Begin InputTables
+    Name ="qryCars"
+End
+Begin OutputColumns
+    Expression ="qryCars.Manufacturer"
+    GroupLevel =2
+    Expression ="qryCars.Year"
+    GroupLevel =2
+    Expression ="qryCars.Model"
+    GroupLevel =1
+    Alias ="CountOfColour"
+    Expression ="Count(qryCars.Colour)"
+End
+Begin OrderBy
+    Expression ="qryCars.Manufacturer"
+    Flag =0
+    Expression ="qryCars.Year"
+    Flag =0
+End
+Begin Groups
+    Expression ="qryCars.Manufacturer"
+    GroupLevel =2
+    Expression ="qryCars.Year"
+    GroupLevel =2
+    Expression ="qryCars.Model"
+    GroupLevel =1
+End
+dbBoolean "ReturnsRecords" ="-1"
+dbInteger "ODBCTimeout" ="60"
+dbByte "RecordsetType" ="0"
+dbBoolean "OrderByOn" ="0"
+dbByte "Orientation" ="0"
+dbByte "DefaultView" ="2"
+dbBoolean "FilterOnLoad" ="0"
+dbBoolean "OrderByOnLoad" ="-1"
+dbBoolean "TotalsRow" ="0"
+Begin
+    Begin
+        dbText "Name" ="qryCars.Manufacturer"
+        dbLong "AggregateType" ="-1"
+    End
+    Begin
+        dbText "Name" ="qryCars.Year"
+        dbLong "AggregateType" ="-1"
+    End
+End

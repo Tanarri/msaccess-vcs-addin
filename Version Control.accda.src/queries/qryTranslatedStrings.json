@@ -1,0 +1,31 @@
+﻿{
+  "Info": {
+    "Class": "clsDbQuery",
+    "Description": "qryTranslatedStrings"
+  },
+  "Items": {
+    "QueryType": 0,
+    "Columns": {
+      "Key": {
+        "ColumnWidth": 3525,
+        "AggregateType": -1
+      },
+      "qryStrings.Comments": {
+        "ColumnWidth": 3510,
+        "AggregateType": -1
+      },
+      "qryStrings.ID": {
+        "ColumnWidth": 870,
+        "AggregateType": -1
+      },
+      "qryStrings.Reference": {
+        "ColumnWidth": 4290,
+        "AggregateType": -1
+      },
+      "tblTranslation.Translation": {
+        "ColumnWidth": 7215,
+        "AggregateType": -1
+      }
+    }
+  }
+}

@@ -1,0 +1,933 @@
+﻿Attribute VB_Name = "modContainers"
+'---------------------------------------------------------------------------------------
+' Module    : modContainers
+' Author    : Adam Waller
+' Date      : 12/4/2020
+' Purpose   : Component type registry, container lookup, and source file metadata
+'           : functions for the IDbComponent system.
+' Layer     : Core Logic
+' Depends on: modObjects, modConstants, modFileAccess, modHash, modFunctions
+'---------------------------------------------------------------------------------------
+Option Compare Database
+Option Private Module
+Option Explicit
+'@Folder("Core")
+
+Private Const ModuleName = "modContainers"
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetAllContainers
+' Author    : Adam Waller
+' Date      : 5/4/2020
+' Purpose   : Return a collection of all containers.
+'           : NOTE: The order doesn't matter for export, but is VERY important
+'           : when building the project from source.
+'---------------------------------------------------------------------------------------
+'
+Public Function GetContainers(Optional intFilter As eContainerFilter = ecfAllObjects) As Collection
+
+    Dim blnADP As Boolean
+    Dim blnMDB As Boolean
+
+    blnADP = (CurrentProject.ProjectType = acADP)
+    blnMDB = (CurrentProject.ProjectType = acMDB)
+
+    Set GetContainers = New Collection
+    With GetContainers
+        Select Case intFilter
+
+            ' Primary case for processing all objects
+            Case ecfAllObjects
+                If blnMDB Then
+                    ' Handle the connections early as possible but only for MDB formats
+                    .Add New clsDbConnection
+                End If
+
+                ' Shared objects in both MDB and ADP formats
+                .Add New clsDbProject
+                .Add New clsDbVbeProject
+                .Add New clsDbVbeReference
+                .Add New clsDbVbeForm
+                .Add New clsDbProjProperty
+                .Add New clsDbSavedSpec
+                .Add New clsDbModule
+                .Add New clsDbCommandBar
+                If blnADP Then
+                    ' Some types of objects only exist in ADP projects
+                    .Add New clsAdpFunction
+                    .Add New clsAdpServerView
+                    .Add New clsAdpProcedure
+                    .Add New clsAdpTable
+                    .Add New clsAdpTrigger
+                ElseIf blnMDB Then
+                    ' These objects only exist in DAO databases
+                    .Add New clsDbSharedImage
+                    .Add New clsDbTheme
+                    .Add New clsDbProperty
+                    .Add New clsDbImexSpec
+                    .Add New clsDbTableDef
+                    .Add New clsDbQuery
+                End If
+                ' Additional objects to import after ADP/MDB specific items
+                .Add New clsDbForm
+                .Add New clsDbMacro
+                .Add New clsDbReport
+                .Add New clsDbTableData
+                If blnMDB Then
+                    .Add New clsDbTableDataMacro
+                    .Add New clsDbRelation
+                    .Add New clsDbDocument
+                    .Add New clsDbNavPaneGroup
+                    .Add New clsDbHiddenAttribute
+                End If
+
+            ' Process only items that may contain VBA code
+            Case ecfVBAItems
+
+                .Add New clsDbModule
+                .Add New clsDbForm
+                .Add New clsDbReport
+
+        End Select
+    End With
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetClassFromObject
+' Author    : Adam Waller
+' Date      : 2/22/2023
+' Purpose   : Returns a database component class from a database object. (Used when
+'           : exporting a single object.)
+'           : Note that not all component types are supported.
+'---------------------------------------------------------------------------------------
+'
+Public Function GetClassFromObject(objItem As AccessObject) As IDbComponent
+
+    Dim cItem As IDbComponent
+
+    ' Map to correct component class
+    Select Case objItem.Type
+        Case acForm:    Set cItem = New clsDbForm
+        Case acMacro:   Set cItem = New clsDbMacro
+        Case acModule:  Set cItem = New clsDbModule
+        Case acQuery:   Set cItem = New clsDbQuery
+        Case acReport:  Set cItem = New clsDbReport
+        Case acTable:   Set cItem = New clsDbTableDef
+        Case Else
+            ' Not currently supported
+    End Select
+
+    ' Set database item and return class instance
+    If Not cItem Is Nothing Then
+        Set cItem.DbObject = objItem
+        Set GetClassFromObject = cItem
+    End If
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetComponentClass
+' Author    : Adam Waller
+' Date      : 6/3/2023
+' Purpose   : Return an instance of the component class from the component type.
+'---------------------------------------------------------------------------------------
+'
+Public Function GetComponentClass(intType As eDatabaseComponentType) As IDbComponent
+    Dim cls As IDbComponent
+    Select Case intType
+        Case edbAdpFunction:        Set cls = New clsAdpFunction
+        Case edbAdpServerView:      Set cls = New clsAdpServerView
+        Case edbAdpStoredProcedure: Set cls = New clsAdpProcedure
+        Case edbAdpTable:           Set cls = New clsAdpTable
+        Case edbAdpTrigger:         Set cls = New clsAdpTrigger
+        Case edbConnection:         Set cls = New clsDbConnection
+        Case edbDbsProperty:        Set cls = New clsDbProperty
+        Case edbDocument:           Set cls = New clsDbDocument
+        Case edbForm:               Set cls = New clsDbForm
+        Case edbHiddenAttribute:    Set cls = New clsDbHiddenAttribute
+        Case edbImexSpec:           Set cls = New clsDbImexSpec
+        Case edbMacro:              Set cls = New clsDbMacro
+        Case edbModule:             Set cls = New clsDbModule
+        Case edbNavPaneGroup:       Set cls = New clsDbNavPaneGroup
+        Case edbProject:            Set cls = New clsDbProject
+        Case edbProjectProperty:    Set cls = New clsDbProjProperty
+        Case edbQuery:              Set cls = New clsDbQuery
+        Case edbRelation:           Set cls = New clsDbRelation
+        Case edbReport:             Set cls = New clsDbReport
+        Case edbSavedSpec:          Set cls = New clsDbSavedSpec
+        Case edbSharedImage:        Set cls = New clsDbSharedImage
+        Case edbTableData:          Set cls = New clsDbTableData
+        Case edbTableDataMacro:     Set cls = New clsDbTableDataMacro
+        Case edbTableDef:           Set cls = New clsDbTableDef
+        Case edbTheme:              Set cls = New clsDbTheme
+        Case edbVbeForm:            Set cls = New clsDbVbeForm
+        Case edbVbeProject:         Set cls = New clsDbVbeProject
+        Case edbVbeReference:       Set cls = New clsDbVbeReference
+        Case edbCommandBar:         Set cls = New clsDbCommandBar
+        Case Else ' No match, return nothing
+    End Select
+    Set GetComponentClass = cls
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ResolveComponentType
+' Author    : Adam Waller
+' Date      : 4/15/2026
+' Purpose   : Map a user-supplied type string to an eDatabaseComponentType enum value.
+'           : Accepts singular, plural, and common alias forms so that callers
+'           : (MCP tools, direct API, etc.) don't need to know the canonical name.
+'           : Returns -1 if the type string is not recognized.
+'---------------------------------------------------------------------------------------
+'
+Public Function ResolveComponentType(strType As String) As eDatabaseComponentType
+    ResolveComponentType = -1
+    Select Case LCase$(strType)
+        ' Core Access objects
+        Case "query", "queries":                                                ResolveComponentType = edbQuery
+        Case "form", "forms":                                                   ResolveComponentType = edbForm
+        Case "report", "reports":                                               ResolveComponentType = edbReport
+        Case "module", "modules":                                               ResolveComponentType = edbModule
+        Case "table", "tables":                                                 ResolveComponentType = edbTableDef
+        Case "macro", "macros":                                                 ResolveComponentType = edbMacro
+        ' Extended multi-file types
+        Case "table_data":                                                      ResolveComponentType = edbTableData
+        Case "table_data_macro", "table_data_macros":                           ResolveComponentType = edbTableDataMacro
+        Case "relation", "relations":                                           ResolveComponentType = edbRelation
+        Case "saved_spec", "saved_specs":                                       ResolveComponentType = edbSavedSpec
+        Case "imex_spec", "imex_specs", "import_spec", "import_specs":          ResolveComponentType = edbImexSpec
+        Case "theme", "themes":                                                 ResolveComponentType = edbTheme
+        Case "shared_image", "shared_images":                                   ResolveComponentType = edbSharedImage
+        Case "vbe_form", "vbe_forms", "userform", "userforms":                  ResolveComponentType = edbVbeForm
+        Case "menu", "menus", "command_bar", "command_bars", "commandbar", "commandbars": _
+                                                                                ResolveComponentType = edbCommandBar
+        ' Single-file types (object_name ignored by callers)
+        Case "vbe_project", "vb_project":                                       ResolveComponentType = edbVbeProject
+        Case "vbe_reference", "vbe_references":                                 ResolveComponentType = edbVbeReference
+        Case "project":                                                         ResolveComponentType = edbProject
+        Case "connection", "connections":                                        ResolveComponentType = edbConnection
+        Case "db_property", "db_properties":                                    ResolveComponentType = edbDbsProperty
+        Case "project_property", "project_properties":                          ResolveComponentType = edbProjectProperty
+        Case "document", "documents":                                           ResolveComponentType = edbDocument
+        Case "hidden_attribute", "hidden_attributes":                           ResolveComponentType = edbHiddenAttribute
+        Case "nav_pane_group", "nav_pane_groups":                               ResolveComponentType = edbNavPaneGroup
+    End Select
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ResolveComponentTypeArg
+' Author    : Adam Waller
+' Date      : 7/17/2026
+' Purpose   : Accept a Variant that is either a numeric eDatabaseComponentType value
+'           : or a string alias (anything ResolveComponentType accepts). Returns the
+'           : resolved enum value, or -1 if unrecognized.
+'           : This is intended for public API methods that accept a Variant type
+'           : parameter so callers can pass either an enum or a string.
+'---------------------------------------------------------------------------------------
+'
+Public Function ResolveComponentTypeArg(VarType As Variant) As eDatabaseComponentType
+
+    Dim dblType As Double
+    Dim lngType As Long
+
+    ResolveComponentTypeArg = -1
+
+    If IsNull(VarType) Or IsEmpty(VarType) Then Exit Function
+
+    If IsNumeric(VarType) Then
+        dblType = CDbl(VarType)
+        If dblType <> Fix(dblType) Then Exit Function
+        lngType = CLng(dblType)
+        If lngType >= 0 And lngType < eDatabaseComponentType.[_Last] Then
+            If Not GetComponentClass(lngType) Is Nothing Then
+                ResolveComponentTypeArg = lngType
+            End If
+        End If
+    Else
+        ResolveComponentTypeArg = ResolveComponentType(CStr(VarType))
+    End If
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetContainersForTypes
+' Author    : Adam Waller
+' Date      : 7/20/2026
+' Purpose   : Resolve one or more type arguments to a deduplicated collection of
+'           : IDbComponent containers in canonical GetContainers() order.
+'           : Validates project compatibility and, when blnForImport is True,
+'           : rejects categories whose Merge implementation is unsupported.
+'           : Returns Nothing and sets strError when validation fails.
+'---------------------------------------------------------------------------------------
+'
+Public Function GetContainersForTypes(varTypes As Variant, _
+    Optional ByRef strError As String = vbNullString, _
+    Optional ByVal blnForImport As Boolean = False) As Collection
+
+    Dim aTypes() As Variant
+    Dim dRequested As Dictionary
+    Dim colContainers As New Collection
+    Dim cCanonical As IDbComponent
+    Dim cComponent As IDbComponent
+    Dim intComponentType As eDatabaseComponentType
+    Dim lngIdx As Long
+    Dim strBadTypes As String
+    Dim strUnsupported As String
+    Dim strIncompatible As String
+
+    strError = vbNullString
+
+    If IsArray(varTypes) Then
+        aTypes = varTypes
+    Else
+        ReDim aTypes(0)
+        aTypes(0) = varTypes
+    End If
+
+    If UBound(aTypes) < LBound(aTypes) Then
+        strError = "No valid component types specified."
+        Exit Function
+    End If
+
+    Set dRequested = New Dictionary
+
+    For lngIdx = LBound(aTypes) To UBound(aTypes)
+        intComponentType = ResolveComponentTypeArg(aTypes(lngIdx))
+        If intComponentType = -1 Then
+            If Len(strBadTypes) > 0 Then strBadTypes = strBadTypes & ", "
+            strBadTypes = strBadTypes & FormatTypeArg(aTypes(lngIdx))
+        ElseIf Not ComponentTypeInProject(intComponentType) Then
+            If Len(strIncompatible) > 0 Then strIncompatible = strIncompatible & ", "
+            strIncompatible = strIncompatible & ComponentTypeDisplayName(intComponentType)
+        ElseIf blnForImport And Not ComponentTypeSupportsScopedImport(intComponentType) Then
+            If Len(strUnsupported) > 0 Then strUnsupported = strUnsupported & ", "
+            strUnsupported = strUnsupported & ComponentTypeDisplayName(intComponentType)
+        ElseIf Not dRequested.Exists(intComponentType) Then
+            dRequested.Add intComponentType, True
+        End If
+    Next lngIdx
+
+    If Len(strBadTypes) > 0 Then
+        strError = "Unknown object type(s): " & strBadTypes & _
+            ". See ResolveComponentType in modContainers for accepted values."
+        Exit Function
+    End If
+
+    If Len(strIncompatible) > 0 Then
+        strError = "Component type(s) not supported in this database format: " & strIncompatible & "."
+        Exit Function
+    End If
+
+    If Len(strUnsupported) > 0 Then
+        strError = "Import not supported for component type(s): " & strUnsupported & "."
+        Exit Function
+    End If
+
+    If dRequested.Count = 0 Then
+        strError = "No valid component types specified."
+        Exit Function
+    End If
+
+    For Each cCanonical In GetContainers()
+        If dRequested.Exists(cCanonical.ComponentType) Then
+            Set cComponent = GetComponentClass(cCanonical.ComponentType)
+            If Not cComponent Is Nothing Then colContainers.Add cComponent
+        End If
+    Next cCanonical
+
+    Set GetContainersForTypes = colContainers
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ScopedExportPreflight
+' Author    : Adam Waller
+' Date      : 7/20/2026
+' Purpose   : Shared guards for category-scoped export. Returns False and sets
+'           : strError when the operation cannot proceed.
+'---------------------------------------------------------------------------------------
+'
+Public Function ScopedExportPreflight(ByRef strError As String) As Boolean
+
+    strError = vbNullString
+
+    If StrComp(CurrentProject.FullName, CodeProject.FullName, vbTextCompare) = 0 Then
+        strError = "Unable to export the running database. Use the add-in menu or ribbon."
+        Exit Function
+    End If
+
+    ScopedExportPreflight = ScopedVbePreflight(strError)
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ScopedImportPreflight
+' Author    : Adam Waller
+' Date      : 7/20/2026
+' Purpose   : Shared guards for category-scoped import.
+'---------------------------------------------------------------------------------------
+'
+Public Function ScopedImportPreflight(ByRef strError As String) As Boolean
+    strError = vbNullString
+    ScopedImportPreflight = ScopedVbePreflight(strError)
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ComponentTypeSupportsScopedImport
+' Author    : Adam Waller
+' Date      : 7/20/2026
+' Purpose   : Returns false for categories whose Merge path is explicitly unsupported
+'           : or a documented no-op (table data, ADP schema objects).
+'---------------------------------------------------------------------------------------
+'
+Public Function ComponentTypeSupportsScopedImport(intType As eDatabaseComponentType) As Boolean
+    Select Case intType
+        Case edbTableData, edbAdpFunction, edbAdpServerView, edbAdpStoredProcedure, _
+             edbAdpTable, edbAdpTrigger
+            ComponentTypeSupportsScopedImport = False
+        Case Else
+            ComponentTypeSupportsScopedImport = True
+    End Select
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ContainerHasObject
+' Author    : Adam Waller
+' Date      : 6/2/2023
+' Purpose   : Returns true if the dictionary container has one or more of the specified
+'           : object type within it. (This is useful when determining whether we need
+'           : to run certain post-build operations.)
+'---------------------------------------------------------------------------------------
+'
+Public Function ContainerHasObject(dContainer As Dictionary, intComponentType As eDatabaseComponentType) As Boolean
+
+    Dim dCategory As Dictionary
+    Dim varKey As Variant
+
+    ' Get category (key) name of component type
+    varKey = GetComponentClass(intComponentType).Category
+
+    ' Check for any objects in this category
+    If dContainer.Exists(varKey) Then
+        Set dCategory = dContainer(varKey)
+        If dCategory.Exists("Files") Then ContainerHasObject = (dCategory("Files").Count > 0)
+        If dCategory.Exists("Objects") Then ContainerHasObject = (dCategory("Objects").Count > 0)
+    End If
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ContainerHasAnyObject
+' Author    : Adam Waller
+' Date      : 6/3/2023
+' Purpose   : Return true if ANY of the specified objects types are found.
+'---------------------------------------------------------------------------------------
+'
+Public Function ContainerHasAnyObject(dContainer As Dictionary, ParamArray intOtherTypes() As Variant) As Boolean
+
+    Dim intType As Integer
+    Dim cCategory As IDbComponent
+    Dim dCategory As Dictionary
+    Dim varKey As Variant
+    Dim blnFound As Boolean
+
+    ' Loop through types
+    For intType = LBound(intOtherTypes) To UBound(intOtherTypes)
+        ' Loop through containers
+        For Each varKey In dContainer.Keys
+            If TypeOf varKey Is IDbComponent Then
+                Set cCategory = varKey
+                ' Look for matching component type
+                If cCategory.ComponentType = intOtherTypes(intType) Then
+                    Set dCategory = dContainer(varKey)
+                    If dCategory.Exists("Files") Then blnFound = (dCategory("Files").Count > 0)
+                    If dCategory.Exists("Objects") Then blnFound = (dCategory("Objects").Count > 0)
+                    If blnFound Then Exit For
+                End If
+            End If
+        Next varKey
+        If blnFound Then Exit For
+    Next intType
+
+    ' Return true if any matching object was found.
+    ContainerHasAnyObject = blnFound
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : MergeIfChanged
+' Author    : Adam Waller
+' Date      : 6/3/2023
+' Purpose   : Merge the component type if the database object seems to be different
+'           : than the source file. (For example, after merging a form, you may need
+'           : to merge document properties to get the form description.)
+'---------------------------------------------------------------------------------------
+'
+Public Sub MergeIfChanged(intComponentType As eDatabaseComponentType)
+
+    Dim cComponent As IDbComponent
+    Dim dItems As Dictionary
+    Dim varKey As Variant
+    Dim cItem As IDbComponent
+
+    ' Convert enum to component class
+    Set cComponent = GetComponentClass(intComponentType)
+
+    ' Check component items for changed database objects.
+    With cComponent
+        ' Get dictionary of modified items
+        Set dItems = .GetAllFromDB(True)
+        For Each varKey In dItems.Keys
+            Set cItem = dItems(varKey)
+            Log.Add "  " & FSO.GetFileName(cItem.SourceFile)
+            cItem.Merge cItem.SourceFile
+            If .SingleFile Then Exit For
+        Next varKey
+    End With
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetQuickObjectCount
+' Author    : Adam Waller
+' Date      : 6/14/2022
+' Purpose   : Return a quick, non-iterative object count for the collection of
+'           : database components. (Used for progress bar)
+'---------------------------------------------------------------------------------------
+'
+Public Function GetQuickObjectCount(colContainers As Collection) As Long
+
+    Dim lngTotal As Long
+    Dim cCont As IDbComponent
+
+    Perf.OperationStart "Quick Count Objects"
+    For Each cCont In colContainers
+        lngTotal = lngTotal + cCont.QuickCount
+    Next cCont
+    Perf.OperationEnd
+
+    GetQuickObjectCount = lngTotal
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetQuickFileCount
+' Author    : Adam Waller
+' Date      : 6/14/2022
+' Purpose   : Return a quick count of the files in each folder so we can increment
+'           : the progress of scanning through files in a folder.
+'---------------------------------------------------------------------------------------
+'
+Public Function GetQuickFileCount(colContainers As Collection) As Long
+
+    Dim lngTotal As Long
+    Dim strBase As String
+    Dim strFolder As String
+    Dim cCont As IDbComponent
+
+    ' Get base folder path
+    Perf.OperationStart "Quick Count Files"
+    strBase = Options.GetExportFolder
+
+    For Each cCont In colContainers
+        strFolder = cCont.BaseFolder
+        If StrComp(strBase, strFolder, vbTextCompare) = 0 Then
+            ' Add a single count for the single file
+            lngTotal = lngTotal + 1
+        Else
+            ' Make sure the folder actually exists before getting a file count
+            If FSO.FolderExists(strFolder) Then
+                lngTotal = lngTotal + CountFilesRecursive(FSO.GetFolder(strFolder))
+            End If
+        End If
+    Next cCont
+    Perf.OperationEnd
+
+    ' Return total number of files in all source folders
+    GetQuickFileCount = lngTotal
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : CountFilesRecursive
+' Author    : Adam Waller
+' Date      : 3/10/2026
+' Purpose   : Return the total count of files in a folder and all subfolders.
+'           : Used by GetQuickFileCount for @Folder annotation support.
+'---------------------------------------------------------------------------------------
+'
+Private Function CountFilesRecursive(oFolder As Scripting.Folder) As Long
+
+    Dim oSubFolder As Scripting.Folder
+
+    CountFilesRecursive = oFolder.Files.Count
+    For Each oSubFolder In oFolder.SubFolders
+        CountFilesRecursive = CountFilesRecursive + CountFilesRecursive(oSubFolder)
+    Next oSubFolder
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetSourceModifiedDate
+' Author    : Adam Waller
+' Date      : 12/1/2023
+' Purpose   : Return the largest modified date for the source files associated with
+'           : this component type.
+'---------------------------------------------------------------------------------------
+'
+Public Function GetSourceModifiedDate(cmp As IDbComponent, Optional strFile As String) As Date
+
+    Dim varExt As Variant
+    Dim dteLatest As Date
+    Dim strBaseFile As String
+
+    ' Resolve to the provided file or the component's default source file,
+    ' then build the full base path (folder + name, no extension).
+    strBaseFile = GetSourceBasePath(cmp, strFile)
+
+    ' Check each possible file extension to find the most recent date
+    For Each varExt In cmp.FileExtensions
+        dteLatest = Largest(dteLatest, GetLastModifiedDate(strBaseFile & "." & varExt))
+    Next varExt
+
+    ' Return most recent date
+    GetSourceModifiedDate = dteLatest
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetLastModifiedSourceFile
+' Author    : Adam Waller
+' Date      : 12/1/2023
+' Purpose   : Return the path of the last modified source file for the specified
+'           : component. (This may not be the primary source file used by the index.)
+'---------------------------------------------------------------------------------------
+'
+Public Function GetLastModifiedSourceFile(cmp As IDbComponent, Optional strFile As String)
+
+    Dim varExt As Variant
+    Dim dteLatest As Date
+    Dim dteTest As Date
+    Dim strSourceFile As String
+    Dim strLastModifiedFile As String
+    Dim strBaseFile As String
+
+    ' Resolve to the provided file or the component's default source file,
+    ' then build the full base path (folder + name, no extension).
+    strBaseFile = GetSourceBasePath(cmp, strFile)
+
+    ' Check each possible file extension to find the most recent date
+    For Each varExt In cmp.FileExtensions
+        strSourceFile = strBaseFile & "." & varExt
+        dteTest = GetLastModifiedDate(strSourceFile)
+        If dteTest > dteLatest Then
+            dteLatest = dteTest
+            strLastModifiedFile = strSourceFile
+        End If
+    Next varExt
+
+    ' Return file path for most recently modified file
+    GetLastModifiedSourceFile = strLastModifiedFile
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetSourceFilesPropertyHash
+' Author    : Adam Waller
+' Date      : 12/1/2023
+' Purpose   : Return a has of the source file dates and sizes for this component type.
+'           : (Useful for determining if any of the source files have been modified.)
+'---------------------------------------------------------------------------------------
+'
+'           : When dMeta is supplied (a path -> Array(date, size) map from a single
+'           : Win32 folder scan, see ScanFolderMetadata), file dates/sizes are read from
+'           : it instead of a per-file FSO.GetFile, which is dramatically faster on large
+'           : folders. The cached values are passed to clsConcat exactly as the FSO values
+'           : would be, so the resulting hash is identical. When dMeta is omitted (e.g.
+'           : the export-write path, where files are changing), it falls back to FSO.
+Public Function GetSourceFilesPropertyHash(cmp As IDbComponent, Optional strFile As String, _
+    Optional dMeta As Dictionary) As String
+
+    Dim varExt As Variant
+    Dim strSourceFile As String
+    Dim strBaseFile As String
+    Dim oFile As Scripting.File
+    Dim varMeta As Variant
+
+    Perf.OperationStart "Get File Property Hash"
+
+    ' Build base file path without extension
+    strBaseFile = GetSourceBasePath(cmp, strFile)
+
+    ' Build a combined string with all the properties
+    With New clsConcat
+
+        ' Check each possible file extension to find all the source files
+        For Each varExt In cmp.FileExtensions
+            strSourceFile = strBaseFile & "." & varExt
+            If Not dMeta Is Nothing Then
+                ' Use date/size captured in the single folder scan. Absence from the
+                ' map means the file does not exist (same as FSO.FileExists = False).
+                If dMeta.Exists(strSourceFile) Then
+                    varMeta = dMeta(strSourceFile)
+                    ' Parentheses force each Variant element to be passed ByVal so it
+                    ' coerces to clsConcat.Add's ByRef String parameter -- the same
+                    ' implicit Date/Number -> String coercion the FSO branch relies on,
+                    ' which keeps the resulting hash identical.
+                    .Add (varMeta(0)), (varMeta(1))
+                End If
+            ElseIf FSO.FileExists(strSourceFile) Then
+                Set oFile = FSO.GetFile(strSourceFile)
+                .Add oFile.DateLastModified, oFile.Size
+            End If
+        Next varExt
+
+        ' Return hash of combined string
+        GetSourceFilesPropertyHash = GetStringHash(.GetStr)
+        Perf.OperationEnd
+    End With
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetSourceFilesContentHash
+' Author    : Adam Waller
+' Date      : 7/20/2026
+' Purpose   : Return a hash of the content of all indexed source files for a component.
+'           : Used by merge change-detection to detect companion-file-only edits.
+'           :
+'           : When dMeta is supplied (a path -> Array(date, size) map from a single Win32
+'           : folder scan, see ScanFolderMetadata), file existence is answered from the
+'           : map instead of a per-extension FSO.FileExists. Absence from the map means
+'           : the file does not exist, so the resulting hash is identical either way.
+'---------------------------------------------------------------------------------------
+'
+Public Function GetSourceFilesContentHash(cmp As IDbComponent, Optional strFile As String, _
+    Optional dMeta As Dictionary) As String
+
+    Dim varExt As Variant
+    Dim strSourceFile As String
+    Dim strBaseFile As String
+    Dim blnExists As Boolean
+
+    Perf.OperationStart "Get File Content Hash"
+
+    strBaseFile = GetSourceBasePath(cmp, strFile)
+
+    With New clsConcat
+        For Each varExt In cmp.FileExtensions
+            strSourceFile = strBaseFile & "." & varExt
+            If dMeta Is Nothing Then
+                blnExists = FSO.FileExists(strSourceFile)
+            Else
+                blnExists = dMeta.Exists(strSourceFile)
+            End If
+            If blnExists Then .Add GetFileHash(strSourceFile)
+        Next varExt
+        GetSourceFilesContentHash = GetStringHash(.GetStr)
+        Perf.OperationEnd
+    End With
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetSourceFileCount
+' Author    : Adam Waller
+' Date      : 8/11/2026
+' Purpose   : Return how many indexed source files for this component exist on disk.
+'           : Used by merge change-detection to distinguish multi-file components
+'           : (form .form+.cls, module with companion .json) from single-file ones
+'           : when deciding whether a legacy index entry lacking AllFilesHash can
+'           : safely fall back to the primary file content hash alone.
+'           :
+'           : Counts files that exist, not FileExtensions.Count: clsDbModule reports
+'           : "bas", "cls", and "json" but only one of bas/cls is ever present, so a
+'           : bare module must keep the precise primary-hash comparison.
+'           :
+'           : When dMeta is supplied (a path -> Array(date, size) map from a single
+'           : Win32 folder scan, see ScanFolderMetadata), existence is answered from
+'           : the map instead of a per-extension FSO.FileExists.
+'---------------------------------------------------------------------------------------
+'
+Public Function GetSourceFileCount(cmp As IDbComponent, Optional strFile As String, _
+    Optional dMeta As Dictionary) As Long
+
+    Dim varExt As Variant
+    Dim strSourceFile As String
+    Dim strBaseFile As String
+    Dim lngCount As Long
+
+    strBaseFile = GetSourceBasePath(cmp, strFile)
+
+    For Each varExt In cmp.FileExtensions
+        strSourceFile = strBaseFile & "." & varExt
+        If dMeta Is Nothing Then
+            If FSO.FileExists(strSourceFile) Then lngCount = lngCount + 1
+        ElseIf dMeta.Exists(strSourceFile) Then
+            lngCount = lngCount + 1
+        End If
+    Next varExt
+
+    GetSourceFileCount = lngCount
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetSourceBasePath
+' Author    : Adam Waller
+' Date      : 7/29/2026
+' Purpose   : Return the full source path with the extension removed, so the per-extension
+'           : file names for a component can be built by appending "." & extension.
+'           :
+'           : Equivalent to FSO.BuildPath(FSO.GetParentFolderName(p), FSO.GetBaseName(p))
+'           : but without three COM round trips. This runs once per source file per scan,
+'           : where a project with thousands of components makes the FSO cost measurable.
+'           : The final "." only counts as an extension separator when it falls after the
+'           : last path separator, so folder names containing dots and files with no
+'           : extension are both handled the same way FSO handles them.
+'           :
+'           : Public (within this project) so the equivalence with FSO can be pinned by
+'           : a regression test. See modTestContainers.
+'---------------------------------------------------------------------------------------
+'
+Public Function GetSourceBasePath(cmp As IDbComponent, Optional strFile As String) As String
+
+    Dim strPath As String
+    Dim lngSep As Long
+    Dim lngAltSep As Long
+    Dim lngDot As Long
+
+    strPath = Nz2(strFile, cmp.SourceFile)
+
+    lngSep = InStrRev(strPath, PathSep)
+    lngAltSep = InStrRev(strPath, "/")
+    If lngAltSep > lngSep Then lngSep = lngAltSep
+
+    lngDot = InStrRev(strPath, ".")
+    If lngDot > lngSep Then
+        GetSourceBasePath = Left$(strPath, lngDot - 1)
+    Else
+        GetSourceBasePath = strPath
+    End If
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ComponentTypeInProject
+' Purpose   : Returns true when the type is exported/imported for the current project.
+'---------------------------------------------------------------------------------------
+'
+Private Function ComponentTypeInProject(intType As eDatabaseComponentType) As Boolean
+
+    Dim cCont As IDbComponent
+
+    For Each cCont In GetContainers()
+        If cCont.ComponentType = intType Then
+            ComponentTypeInProject = True
+            Exit Function
+        End If
+    Next cCont
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ComponentTypeDisplayName
+' Purpose   : Friendly name for validation errors.
+'---------------------------------------------------------------------------------------
+'
+Private Function ComponentTypeDisplayName(intType As eDatabaseComponentType) As String
+
+    Dim cComponent As IDbComponent
+
+    Set cComponent = GetComponentClass(intType)
+    If cComponent Is Nothing Then
+        ComponentTypeDisplayName = CStr(intType)
+    Else
+        ComponentTypeDisplayName = cComponent.Category
+    End If
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : FormatTypeArg
+' Purpose   : Safe display of a type argument for error messages.
+'---------------------------------------------------------------------------------------
+'
+Private Function FormatTypeArg(varArgType As Variant) As String
+    If IsNull(varArgType) Then
+        FormatTypeArg = "Null"
+    ElseIf IsEmpty(varArgType) Then
+        FormatTypeArg = "Empty"
+    Else
+        FormatTypeArg = CStr(varArgType)
+    End If
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ScopedVbePreflight
+' Purpose   : Reject scoped sync when the VBE project is locked or compiled.
+'---------------------------------------------------------------------------------------
+'
+Private Function ScopedVbePreflight(ByRef strError As String) As Boolean
+
+    ScopedVbePreflight = True
+
+    If CurrentVBProject.Protection = vbext_pp_locked Then
+        If IsMDE Then
+            strError = "The current database is a compiled MDE/ACCDE file and does not contain the original VBA source code."
+        Else
+            strError = "Project is protected with a password. Unlock the project before using this tool."
+        End If
+        ScopedVbePreflight = False
+    End If
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : MoveComponentSource
+' Author    : Adam Waller
+' Date      : 7/20/2026
+' Purpose   : Move all source files for a component from one folder to another, using
+'           : FileExtensions(efesAll) as the single source of truth for which files
+'           : belong to the object.
+'---------------------------------------------------------------------------------------
+'
+Public Sub MoveComponentSource(cmp As IDbComponent, strFromFolder As String, strToFolder As String)
+
+    Dim varExt As Variant
+    Dim strBase As String
+
+    VerifyPath strToFolder
+    strBase = FSO.GetBaseName(cmp.SourceFile)
+
+    For Each varExt In cmp.FileExtensions(efesAll)
+        MoveFileIfExists strFromFolder & strBase & "." & varExt, strToFolder
+    Next varExt
+
+End Sub

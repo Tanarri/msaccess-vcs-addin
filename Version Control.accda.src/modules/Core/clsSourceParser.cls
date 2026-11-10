@@ -1,0 +1,1976 @@
+﻿VERSION 1.0 CLASS
+BEGIN
+  MultiUse = -1  'True
+END
+Attribute VB_Name = "clsSourceParser"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = False
+Attribute VB_Exposed = False
+'---------------------------------------------------------------------------------------
+' Module    : clsSourceParser
+' Author    : Adam Waller
+' Date      : 12/4/2020
+' Purpose   : Functions to sanitize files to remove non-essential metadata
+'---------------------------------------------------------------------------------------
+Option Compare Database
+Option Explicit
+'@Folder("Core")
+
+Public ObjectName As String
+Public RowSortFields As Dictionary
+
+' XML namespaces used by the schema Application.ExportXML produces for table definitions.
+Private Const NS_XSD_URI As String = "http://www.w3.org/2001/XMLSchema"
+Private Const NS_OD_URI As String = "urn:schemas-microsoft-com:officedata"
+
+Public Enum eContentType
+    ectObjectDefinition
+    ectXML
+    ectVBA
+End Enum
+
+' Private type to handle internal variables
+Private Type udtThis
+    intObjectType As eDatabaseComponentType
+    strFilePath As String   ' Path to loaded file
+    blnOutputModified As Boolean
+    strInput As String
+    strOutput As String
+    strVBA As String
+    colBlocks As Collection
+    dConditionalFormat As Dictionary    ' Control name -> {CF14, Legacy, Decoded, SkipLines}
+    strCFControl As String              ' Name of the control currently being scanned
+End Type
+Private this As udtThis
+
+' Boolean membership map used by the sanitizer: source line index -> omit from output.
+Private m_blnSkipLine() As Boolean
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : LoadFile
+' Author    : Adam Waller
+' Date      : 10/25/2023
+' Purpose   : Load a source file to sanitize
+'---------------------------------------------------------------------------------------
+'
+Public Function LoadSourceFile(strPath As String, intType As eDatabaseComponentType)
+    ResetContent
+    this.intObjectType = intType
+    this.strInput = ReadSourceFile(strPath)
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : LoadString
+' Author    : Adam Waller
+' Date      : 10/27/2023
+' Purpose   : Load input from a string
+'---------------------------------------------------------------------------------------
+'
+Public Function LoadString(ByVal strContent As String, intType As eDatabaseComponentType)
+    ResetContent
+    this.intObjectType = intType
+    this.strInput = strContent
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetOutput
+' Author    : Adam Waller
+' Date      : 11/8/2023
+' Purpose   : Wrapper to return output string
+'---------------------------------------------------------------------------------------
+'
+Public Function GetOutput() As String
+    GetOutput = this.strOutput
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : OutputModified
+' Author    : Adam Waller
+' Date      : 11/8/2023
+' Purpose   : Return true if the output has been modified
+'---------------------------------------------------------------------------------------
+'
+Public Property Get OutputModified() As Boolean
+    OutputModified = this.blnOutputModified
+End Property
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ResetContent
+' Author    : Adam Waller
+' Date      : 10/31/2023
+' Purpose   : Resets the local variables when data is loaded from a new source.
+'---------------------------------------------------------------------------------------
+'
+Private Sub ResetContent()
+    With this
+        .strFilePath = vbNullString
+        .strInput = vbNullString
+        .strOutput = vbNullString
+        .strVBA = vbNullString
+        .blnOutputModified = False
+        Set .dConditionalFormat = Nothing
+        .strCFControl = vbNullString
+    End With
+    Me.ObjectName = vbNullString
+    Set Me.RowSortFields = Nothing
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : Sanitize
+' Author    : Adam Waller
+' Date      : 10/25/2023
+' Purpose   : Public wrapper for sanitize functions
+'---------------------------------------------------------------------------------------
+'
+Public Function Sanitize(intContentType As eContentType) As String
+    Select Case intContentType
+        Case ectObjectDefinition:   SanitizeObject
+        Case ectVBA:                SanitizeVBA
+        Case ectXML:                SanitizeXML
+    End Select
+    Sanitize = this.strOutput
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : MergeVBA
+' Author    : Adam Waller
+' Date      : 10/27/2023
+' Purpose   : Merge VBA into the output content.
+'---------------------------------------------------------------------------------------
+'
+Public Sub MergeVBA(strVbaCode As String)
+
+    Dim varLines As Variant
+    Dim lngLine As Long
+
+    ' Make sure we have some output
+    If Len(this.strOutput) = 0 Then this.strOutput = this.strInput
+
+    ' Rebuild output using provided VBA code
+    With New clsConcat
+        .AppendOnAdd = vbCrLf
+
+        ' Load in existing sanitized content
+        varLines = Split(this.strOutput, vbCrLf)
+        For lngLine = 0 To UBound(varLines)
+            ' Note that the same heading name is used in both forms and reports
+            If varLines(lngLine) = "CodeBehindForm" Then
+                ' Allow merge of empty string to remove VBA code module
+                If Len(strVbaCode) Then .Add CStr(varLines(lngLine))
+                Exit For
+            Else
+                ' Add all other lines
+                .Add CStr(varLines(lngLine))
+            End If
+        Next lngLine
+
+        ' Add the VBA code here, and remove extra vbCrLf
+        .Add strVbaCode
+        .Remove 2
+
+        ' Update output with combined content
+        this.strOutput = .GetStr
+        this.strVBA = strVbaCode
+        this.blnOutputModified = True
+    End With
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : MergePrintSettings
+' Author    : Adam Waller
+' Date      : 11/8/2023
+' Purpose   : Merge print settings into the current source file.
+'---------------------------------------------------------------------------------------
+'
+Public Sub MergePrintSettings(strJson As String)
+
+    Dim dSettings As Dictionary
+
+    ' Make sure we have some output
+    If Len(this.strOutput) = 0 Then this.strOutput = this.strInput
+
+    ' Don't try to parse an empty string
+    If strJson = vbNullString Then Exit Sub
+
+    ' Read settings from JSON
+    Set dSettings = ParseJson(strJson)
+    If dSettings.Exists("Items") Then
+        With New clsPrinterSettings
+            ' Load default printer settings, then overlay
+            ' settings saved with report.
+            .ApplySettings dSettings("Items"), Me.ObjectName
+            ' Write the printer settings to the output content
+            this.strOutput = .AddToExportFile(this.strOutput)
+            this.blnOutputModified = True
+        End With
+    End If
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : MergeConditionalFormat
+' Author    : Adam Waller
+' Date      : 6/17/2026
+' Purpose   : Rebuild and reinsert per-control conditional formatting blocks from the
+'           : companion JSON file content. Always runs (no version gate) so that source
+'           : exported by newer versions can be imported by any build. Older source with
+'           : inline blocks simply has no ConditionalFormatting section to merge.
+'---------------------------------------------------------------------------------------
+'
+Public Sub MergeConditionalFormat(strJson As String)
+
+    Dim dFile As Dictionary
+    Dim dItems As Dictionary
+    Dim dControls As Dictionary
+    Dim varLines As Variant
+    Dim lngLine As Long
+    Dim strLine As String
+    Dim strTLine As String
+    Dim strName As String
+    Dim intIndent As Integer
+    Dim cCF As clsConditionalFormat
+    Dim cData As clsConcat
+    Dim blnStripInline As Boolean
+
+    If DebugMode(True) Then On Error GoTo 0 Else On Error Resume Next
+
+    ' Make sure we have some output to work with
+    If Len(this.strOutput) = 0 Then this.strOutput = this.strInput
+    If strJson = vbNullString Then Exit Sub
+
+    ' Read the conditional formatting section from the companion JSON
+    Set dFile = ParseJson(strJson)
+    If dFile Is Nothing Then Exit Sub
+    If Not dFile.Exists("Items") Then Exit Sub
+    Set dItems = dFile("Items")
+    If Not dItems.Exists("ConditionalFormatting") Then Exit Sub
+    Set dControls = dItems("ConditionalFormatting")
+    If dControls Is Nothing Then Exit Sub
+    If dControls.Count = 0 Then Exit Sub
+
+    ' Rebuild the output, injecting the rebuilt blocks after each matching control's
+    ' Name property. (Property order within a control is not significant on import.)
+    ' The JSON is authoritative: for any control that has a JSON entry, drop any inline
+    ' binary block already in the source so the two representations can't both survive
+    ' (avoids duplicate blocks and makes the merge idempotent). Controls that have no
+    ' JSON entry keep their inline block untouched. This relies on the control's Name
+    ' property preceding its CF blocks, the same ordering the export capture assumes.
+    Perf.OperationStart "Merge Conditional Formatting"
+    Set cData = New clsConcat
+    cData.AppendOnAdd = vbCrLf
+    varLines = Split(this.strOutput, vbCrLf)
+    For lngLine = 0 To UBound(varLines)
+        strLine = varLines(lngLine)
+        strTLine = Trim$(strLine)
+
+        If blnStripInline Then
+            ' Discard the superseded inline block's lines through its closing End.
+            If strTLine = "End" Then blnStripInline = False
+        ElseIf (strTLine = "ConditionalFormat = Begin" _
+            Or strTLine = "ConditionalFormat14 = Begin") _
+            And Len(strName) > 0 And dControls.Exists(strName) Then
+            ' This control is rebuilt from JSON; strip its stale inline block.
+            blnStripInline = True
+            this.blnOutputModified = True
+        Else
+            cData.Add CStr(strLine)
+            If StartsWith(strTLine, "Name =""") Then
+                strName = ExtractControlName(strTLine)
+                If dControls.Exists(strName) Then
+                    intIndent = GetIndent(strLine)
+                    Set cCF = New clsConditionalFormat
+                    cCF.LoadFromDictionary dControls(strName)
+                    If cCF.HasRules Then
+                        ' Match Access output order: legacy block first, then CF14.
+                        cData.Add FormatCFBlock("ConditionalFormat", cCF.BuildLegacyHex, intIndent)
+                        cData.Add FormatCFBlock("ConditionalFormat14", cCF.BuildCF14Hex, intIndent)
+                        this.blnOutputModified = True
+                    End If
+                End If
+            End If
+        End If
+    Next lngLine
+
+    ' Remove the trailing line break and update the output
+    cData.Remove Len(vbCrLf)
+    this.strOutput = cData.GetStr
+    Perf.OperationEnd
+
+    CatchAny eelError, "Error merging conditional formatting", ModuleName(Me) & ".MergeConditionalFormat"
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetConditionalFormats
+' Author    : Adam Waller
+' Date      : 6/17/2026
+' Purpose   : Return the decoded conditional formatting captured during sanitizing,
+'           : keyed by control name. Empty dictionary if none were found.
+'---------------------------------------------------------------------------------------
+'
+Public Function GetConditionalFormats() As Dictionary
+
+    Dim dResult As Dictionary
+    Dim varKey As Variant
+    Dim dControl As Dictionary
+    Dim cCF As clsConditionalFormat
+
+    Set dResult = New Dictionary
+    dResult.CompareMode = TextCompare
+    Set GetConditionalFormats = dResult
+    If this.dConditionalFormat Is Nothing Then Exit Function
+
+    Perf.OperationStart "Decode Conditional Formatting"
+    For Each varKey In this.dConditionalFormat.Keys
+        Set dControl = this.dConditionalFormat(varKey)
+        If dControl.Exists("Decoded") Then
+            dResult.Add CStr(varKey), dControl("Decoded")
+        ElseIf dControl.Exists("CF14") Then
+            ' Fallback when capture did not run eager decode (e.g. tests)
+            Set cCF = New clsConditionalFormat
+            If cCF.LoadFromCF14Hex(CStr(dControl("CF14"))) And cCF.HasRules Then
+                dResult.Add CStr(varKey), cCF.GetDictionary
+            End If
+        End If
+    Next varKey
+    Perf.OperationEnd
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : StoreCFBlock
+' Author    : Adam Waller
+' Date      : 6/17/2026
+' Purpose   : Save a captured conditional formatting hex block for the current control.
+'---------------------------------------------------------------------------------------
+'
+Private Sub StoreCFBlock(strKind As String, cBuffer As clsConcat)
+
+    Dim dControl As Dictionary
+
+    If this.dConditionalFormat Is Nothing Then Set this.dConditionalFormat = New Dictionary
+    If this.dConditionalFormat.Exists(this.strCFControl) Then
+        Set dControl = this.dConditionalFormat(this.strCFControl)
+    Else
+        Set dControl = New Dictionary
+        this.dConditionalFormat.Add this.strCFControl, dControl
+    End If
+    dControl(strKind) = cBuffer.GetStr
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : RecordCFSkipLine
+' Purpose   : Track source line numbers stripped for a control's CF block so they can be
+'           : restored when decode fails.
+'---------------------------------------------------------------------------------------
+'
+Private Sub RecordCFSkipLine(lngLine As Long)
+
+    Dim dControl As Dictionary
+
+    If this.dConditionalFormat Is Nothing Then Set this.dConditionalFormat = New Dictionary
+    If this.dConditionalFormat.Exists(this.strCFControl) Then
+        Set dControl = this.dConditionalFormat(this.strCFControl)
+    Else
+        Set dControl = New Dictionary
+        this.dConditionalFormat.Add this.strCFControl, dControl
+    End If
+    If Not dControl.Exists("SkipLines") Then dControl.Add "SkipLines", New Collection
+    dControl("SkipLines").Add lngLine
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ResolveCapturedConditionalFormats
+' Purpose   : Decode captured CF14 blocks before output is built. Failed decodes restore
+'           : the original inline blocks by neutralizing their skip-line entries.
+'---------------------------------------------------------------------------------------
+'
+Private Sub ResolveCapturedConditionalFormats()
+
+    Dim varKey As Variant
+    Dim dControl As Dictionary
+    Dim cCF As clsConditionalFormat
+    Dim colSkip As Collection
+    Dim varLine As Variant
+    Dim blnDecoded As Boolean
+    Dim blnCF14 As Boolean
+
+    If this.dConditionalFormat Is Nothing Then Exit Sub
+
+    For Each varKey In this.dConditionalFormat.Keys
+        Set dControl = this.dConditionalFormat(varKey)
+        blnCF14 = dControl.Exists("CF14")
+        blnDecoded = False
+        If blnCF14 Then
+            Set cCF = New clsConditionalFormat
+            If cCF.LoadFromCF14Hex(CStr(dControl("CF14"))) And cCF.HasRules Then
+                Set dControl("Decoded") = cCF.GetDictionary
+                blnDecoded = True
+            End If
+        End If
+        If Not blnDecoded Then
+            If dControl.Exists("SkipLines") Then
+                Set colSkip = dControl("SkipLines")
+                For Each varLine In colSkip
+                    m_blnSkipLine(CLng(varLine)) = False
+                Next varLine
+            End If
+            If blnCF14 Then
+                Log.Add T("Conditional formatting on control {0} in {1} could not be decoded; keeping inline binary blocks.", _
+                    var0:=CStr(varKey), var1:=Nz2(Me.ObjectName, FSO.GetFileName(this.strFilePath)))
+                dControl.Remove "CF14"
+            End If
+            If dControl.Exists("Legacy") Then dControl.Remove "Legacy"
+        End If
+    Next varKey
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : IsBinaryPayloadLine
+' Author    : Adam Waller
+' Date      : 9/11/2026
+' Purpose   : Identify a long inline binary payload without running a prefix comparison
+'           : on ordinary short property lines.
+'---------------------------------------------------------------------------------------
+'
+Private Function IsBinaryPayloadLine(strLine As String) As Boolean
+
+    If Len(strLine) > 60 Then
+        IsBinaryPayloadLine = StartsWith(strLine, "0x")
+    End If
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ExtractHexBytes
+' Author    : Adam Waller
+' Date      : 6/17/2026
+' Purpose   : Return the hex byte characters from a binary block line, stripping the
+'           : "0x" prefix and any trailing comma separator.
+'           : Input:  0x010000007e000000... ,
+'           : Output: 010000007e000000...
+'---------------------------------------------------------------------------------------
+'
+Private Function ExtractHexBytes(strTLine As String) As String
+    Dim strHex As String
+    strHex = Trim$(Mid$(strTLine, 3))
+    If Right$(strHex, 1) = "," Then strHex = Trim$(Left$(strHex, Len(strHex) - 1))
+    ExtractHexBytes = strHex
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ExtractControlName
+' Author    : Adam Waller
+' Date      : 6/17/2026
+' Purpose   : Return the quoted control name from a Name property line.
+'           : Input:  Name ="Text9"
+'           : Output: Text9
+'---------------------------------------------------------------------------------------
+'
+Private Function ExtractControlName(strTLine As String) As String
+    Dim lngStart As Long
+    Dim lngEnd As Long
+    lngStart = InStr(1, strTLine, """")
+    If lngStart > 0 Then
+        lngEnd = InStrRev(strTLine, """")
+        If lngEnd > lngStart Then ExtractControlName = Mid$(strTLine, lngStart + 1, lngEnd - lngStart - 1)
+    End If
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : FormatCFBlock
+' Author    : Adam Waller
+' Date      : 6/17/2026
+' Purpose   : Format a hex byte string into an Access binary block (Name = Begin / 0x.. /
+'           : End) using 32 bytes (64 hex characters) per line, matching SaveAsText.
+'---------------------------------------------------------------------------------------
+'
+Private Function FormatCFBlock(strName As String, strHex As String, intIndent As Integer) As String
+
+    Dim cData As clsConcat
+    Dim lngPos As Long
+    Dim lngTotal As Long
+    Dim strChunk As String
+    Const CHARS_PER_LINE As Long = 64   ' 32 bytes per line
+
+    If Len(strHex) = 0 Then Exit Function
+
+    Set cData = New clsConcat
+    cData.AppendOnAdd = vbCrLf
+    cData.Add Space$(intIndent) & strName & " = Begin"
+    lngTotal = Len(strHex)
+    lngPos = 1
+    Do While lngPos <= lngTotal
+        strChunk = Mid$(strHex, lngPos, CHARS_PER_LINE)
+        lngPos = lngPos + CHARS_PER_LINE
+        If lngPos <= lngTotal Then
+            cData.Add Space$(intIndent + 4) & "0x" & strChunk & " ,"
+        Else
+            cData.Add Space$(intIndent + 4) & "0x" & strChunk
+        End If
+    Loop
+    cData.Add Space$(intIndent) & "End"
+
+    ' Remove the trailing line break (the caller's concat adds its own)
+    cData.Remove Len(vbCrLf)
+    FormatCFBlock = cData.GetStr
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : SaveObjectVBA
+' Author    : Adam Waller
+' Date      : 10/31/2023
+' Purpose   : Return the extracted VBA code
+'---------------------------------------------------------------------------------------
+'
+Public Function GetObjectVBA() As String
+    GetObjectVBA = this.strVBA
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : Hash
+' Author    : Adam Waller
+' Date      : 10/25/2023
+' Purpose   : Return a hash of the sanitized content
+'---------------------------------------------------------------------------------------
+'
+Public Function Hash(Optional blnWithBom As Boolean = True) As String
+    Hash = GetStringHash(this.strOutput, blnWithBom)
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : SanitizeFile
+' Author    : Adam Waller
+' Date      : 11/4/2020
+' Purpose   : Rewritten version of sanitize function. Returns hash of content as well
+'           : as saving to the specified path.
+'---------------------------------------------------------------------------------------
+'
+Private Function SanitizeObject() As String 'strPath As String, blnReturnHash As Boolean, Optional strObjectName As String) As String
+
+    Dim astrLines() As String
+    Dim lngLine As Long
+    Dim lngUpper As Long
+    Dim strLine As String
+    Dim strTLine As String
+    Dim blnInsideIgnoredBlock As Boolean
+    Dim intIndent As Integer
+    Dim blnRemoveBottomRight As Boolean
+    Dim blnIsPassThroughQuery As Boolean
+    Dim curStart As Currency
+    Dim cVBA As clsConcat
+    Dim blnInsideCFBlock As Boolean
+    Dim cCFBuffer As clsConcat
+    Dim strCFKind As String
+    Dim blnStripCF As Boolean
+    Dim blnTrackFormGeometry As Boolean
+    Dim blnNeedsFormGeometry As Boolean
+    Dim lngExportFormat As Long
+    Dim intSanitizeLevel As eSanitizeLevel
+    Dim intSanitizeColors As eSanitizeLevel
+
+    If DebugMode(True) Then On Error GoTo 0 Else On Error Resume Next
+
+    ' If not sanitizing, then return output
+    If Options.SanitizeLevel = eslNone Then
+        this.strOutput = this.strInput
+        SanitizeObject = this.strOutput
+        Exit Function
+    End If
+
+    Perf.OperationStart "Sanitize File"
+    astrLines = Split(this.strInput, vbCrLf)
+    lngUpper = UBound(astrLines)
+    intSanitizeLevel = Options.SanitizeLevel
+    intSanitizeColors = Options.SanitizeColors
+    lngExportFormat = Options.ExportFormatVersion
+
+    ' Determine whether to extract per-control conditional formatting blocks to the
+    ' companion JSON file. Gated behind the export format version and the option, and
+    ' only applies to forms and reports (the only objects that carry these blocks).
+    blnStripCF = (lngExportFormat >= EFV_5_0_0) _
+        And Options.DecodeConditionalFormatting _
+        And (this.intObjectType = edbForm Or this.intObjectType = edbReport)
+    blnTrackFormGeometry = (this.intObjectType = edbForm) _
+        And intSanitizeLevel >= eslStandard _
+        And lngExportFormat >= EFV_5_1_0
+
+    ' Set up direct membership map of lines to skip
+    ReDim m_blnSkipLine(0 To lngUpper)
+    Set this.colBlocks = New Collection
+
+    ' Initialize concatenation class to include line breaks
+    ' after each line that we add when building new file text.
+    curStart = Perf.MicroTimer
+
+    ' Using a do loop since we may adjust the line counter
+    ' during a loop iteration.
+    Do While lngLine <= lngUpper
+
+        ' Get unmodified and trimmed line
+        strLine = astrLines(lngLine)
+        strTLine = Trim$(strLine)
+
+        ' Improve performance by reducing comparisons
+        If Len(strTLine) > 3 And blnInsideIgnoredBlock Then
+            SkipLine lngLine
+        ElseIf blnInsideCFBlock Then
+            ' Capturing a conditional formatting block for the current control.
+            If strTLine = "End" Then
+                RecordCFSkipLine lngLine
+                StoreCFBlock strCFKind, cCFBuffer
+                blnInsideCFBlock = False
+                SkipLine lngLine
+            ElseIf StartsWith(strTLine, "0x") Then
+                RecordCFSkipLine lngLine
+                cCFBuffer.Add ExtractHexBytes(strTLine)
+                SkipLine lngLine
+            Else
+                ' Unexpected content inside the block; skip to stay safe.
+                SkipLine lngLine
+            End If
+        ElseIf IsBinaryPayloadLine(strTLine) Then
+            ' Add binary data line. No need to test this line further.
+        Else
+            ' Run the rest of the tests
+            Select Case strTLine
+
+                ' File version
+                Case "Version =21"
+                    ' Change version down to 20 to allow import into Access 2010.
+                    ' (Haven't seen any significant issues with this.)
+                    astrLines(lngLine) = "Version =20"
+
+                ' Print settings blocks to ignore
+                Case "PrtMip = Begin", _
+                    "PrtDevMode = Begin", _
+                    "PrtDevModeW = Begin", _
+                    "PrtDevNames = Begin", _
+                    "PrtDevNamesW = Begin"
+                    ' Set flag to ignore lines inside this block.
+                    blnInsideIgnoredBlock = True
+                    SkipLine lngLine
+
+                ' Per-control conditional formatting blocks. When enabled, capture the
+                ' hex content for serialization to the companion JSON and strip it from
+                ' the source file. Requires a known control name (see Name tracking below).
+                Case "ConditionalFormat = Begin", "ConditionalFormat14 = Begin"
+                    If blnStripCF And Len(this.strCFControl) > 0 Then
+                        blnInsideCFBlock = True
+                        strCFKind = IIf(strTLine = "ConditionalFormat14 = Begin", "CF14", "Legacy")
+                        Set cCFBuffer = New clsConcat
+                        RecordCFSkipLine lngLine
+                        SkipLine lngLine
+                    Else
+                        ' Leave the block in place as a generic binary block.
+                        BeginBlock
+                    End If
+
+                ' Aggressive sanitize blocks
+                Case "GUID = Begin", _
+                    "NameMap = Begin", _
+                    "dbLongBinary ""DOL"" = Begin", _
+                    "dbBinary ""GUID"" = Begin"
+                    If intSanitizeLevel >= eslStandard Then
+                        blnInsideIgnoredBlock = True
+                        SkipLine lngLine
+                    End If
+
+                ' Single lines to ignore (#249)
+                Case "NoSaveCTIWhenDisabled =1", _
+                    "AllowPivotTableView =0", _
+                    "AllowPivotChartView =0"
+                    SkipLine lngLine
+
+                ' Publish option (used in Queries)
+                Case "dbByte ""PublishToWeb"" =""1""", _
+                    "PublishOption =1"
+                    If Options.StripPublishOption Then SkipLine lngLine
+
+                ' End of block section
+                Case "End"
+                    If blnInsideIgnoredBlock Then
+                        ' Reached the end of the ignored block.
+                        blnInsideIgnoredBlock = False
+                        SkipLine lngLine
+                    Else
+                        ' Check for theme color index
+                        CloseBlock intSanitizeColors
+                    End If
+
+                ' See if this file is from a report object
+                ' (Need more review and testing to apply this to forms. See #641)
+                Case "Begin Report" ', "Begin Form"
+                    ' Turn flag on to ignore Right and Bottom lines
+                    blnRemoveBottomRight = True
+                    BeginBlock
+
+                ' Beginning of main section
+                Case "Begin"
+                    If blnIsPassThroughQuery Then
+                        ' Ignore remaining content. (See Issue #182)
+                        Do While lngLine < lngUpper
+                            SkipLine lngLine, eslStandard
+                            lngLine = lngLine + 1
+                        Loop
+                        Exit Do
+                    ElseIf IsQueryNameAliasBlock(lngLine, astrLines) Then
+                        SkipLine lngLine, eslStandard
+                        intIndent = GetIndent(strLine)
+                        ' Skip following lines till we return to original indent level
+                        Do
+                            SkipLine lngLine + 1, eslStandard
+                            lngLine = lngLine + 1
+                            If GetIndent(astrLines(lngLine)) = intIndent Then Exit Do
+                            ' Sanity check for malformed file
+                            If lngLine > lngUpper Then Exit Do
+                        Loop
+                    Else
+                        BeginBlock
+                    End If
+
+                ' Code section behind form or report object
+                Case "CodeBehindForm"
+                    If Options.SplitLayoutFromVBA Then
+                        ' Remove the VBA code from the layout file, but add a placeholder
+                        ' comment just in case the user wonders what happened to the VBA
+                        ' source code.
+                        lngLine = lngLine + 1
+                        Set cVBA = New clsConcat
+                        cVBA.AppendOnAdd = vbCrLf
+                        cVBA.Add astrLines(lngLine)
+                        astrLines(lngLine) = "' See """ & Nz2(Me.ObjectName, "FileName") & ".cls"""
+                        ' Skip remaining lines
+                        Do While lngLine < lngUpper
+                            lngLine = lngLine + 1
+                            cVBA.Add astrLines(lngLine)
+                            SkipLine lngLine, eslStandard
+                        Loop
+                        Exit Do
+                    Else
+                        ' Apply sanitize rules to VBA code
+                        SanitizeCodeLines lngLine, astrLines
+                        ' Keep everything from this point on
+                        Exit Do
+                    End If
+
+                Case Else
+                    ' Report designer edges are independent of the other rules below.
+                    ' Mark them here without claiming the line from the ElseIf chain.
+                    If blnRemoveBottomRight Then
+                        If StartsWith(strLine, "    Right =") Then
+                            SkipLine lngLine, eslStandard
+                        ElseIf StartsWith(strLine, "    Bottom =") Then
+                            SkipLine lngLine, eslStandard
+                            blnRemoveBottomRight = False
+                        End If
+                    End If
+
+                    If blnInsideIgnoredBlock Then
+                        ' Skip content inside ignored blocks.
+                        SkipLine lngLine
+                    ElseIf StartsWith(strTLine, "Checksum =") Then
+                        ' Ignore Checksum lines, since they will change.
+                        SkipLine lngLine, eslMinimal
+                    ElseIf StartsWith(strTLine, "ColumnInfo =") _
+                        Or StartsWith(strTLine, "BaseInfo =") Then
+                        ' [ColumnInfo] contains some cached info from the record source
+                        ' and will be regenerated when the form is imported. See #412
+                        ' [BaseInfo] is used with combo boxes, similar to RowSource.
+                        ' Since the value could span multiple lines, we need to
+                        ' check the indent level of the following lines to see how
+                        ' many lines to skip.
+                        SkipLine lngLine, eslStandard
+                        intIndent = GetIndent(strLine)
+                        ' Preview the next line, and check the indent level
+                        Do While GetIndent(astrLines(lngLine + 1)) > intIndent
+                            ' Skip previewed line and move to next line
+                            SkipLine lngLine + 1, eslStandard
+                            lngLine = lngLine + 1
+                        Loop
+                    ElseIf StartsWith(strTLine, "WebImagePadding") Then
+                        ' These values tend to drift between builds. See #423
+                        SkipLine lngLine, eslStandard
+                    ElseIf StartsWith(strTLine, "LayoutCached") Then
+                        ' Derived edges; used by form geometry canonicalization, then omitted.
+                        If this.intObjectType = edbForm Then
+                            If lngExportFormat >= EFV_5_1_0 Then
+                                SkipLine lngLine, eslStandard
+                            End If
+                        End If
+                    ElseIf StartsWith(strTLine, "Begin ") Then
+                        ' Include block type name for controls
+                        If blnTrackFormGeometry And Not blnNeedsFormGeometry Then
+                            blnNeedsFormGeometry = _
+                                (StrComp(strTLine, "Begin Tab", vbBinaryCompare) = 0)
+                        End If
+                        BeginBlock Mid$(strTLine, 7)
+                    ElseIf EndsWith(strTLine, " = Begin") Then
+                        BeginBlock
+                    Else
+                        ' All other lines will be added.
+
+                        ' Geometry can only affect layout groups and tab controls.
+                        ' Piggyback on this existing scan so forms without either can
+                        ' skip the canonicalizer without another pass over the file.
+                        If blnTrackFormGeometry And Not blnNeedsFormGeometry Then
+                            If Len(strTLine) > 0 Then
+                                Select Case AscW(strTLine)
+                                    Case 71 ' G
+                                        blnNeedsFormGeometry = _
+                                            StartsWith(strTLine, "GroupTable =")
+                                    Case 76 ' L
+                                        blnNeedsFormGeometry = _
+                                            StartsWith(strTLine, "LayoutGroup =")
+                                End Select
+                            End If
+                        End If
+
+                        ' Track the current control name so conditional formatting
+                        ' blocks can be keyed correctly in the companion JSON.
+                        If blnStripCF Then
+                            If StartsWith(strTLine, "Name =""") Then this.strCFControl = ExtractControlName(strTLine)
+                        End If
+
+                        ' Check for color properties
+                        CheckColorProperties strTLine, lngLine, intSanitizeColors
+
+                        ' Check for pass-through query connection string
+                        If StartsWith(strLine, "dbMemo ""Connect"" =""") Then
+                            ' Not just an empty value (See issue #337)
+                            If Len(strLine) > 20 Then
+                                blnIsPassThroughQuery = True
+                                ' Check for env substitution of connection strings
+                                SubstituteEnvConnect lngLine, astrLines
+                            End If
+                        End If
+                    End If
+
+            End Select
+        End If
+
+        ' Increment counter to next line
+        lngLine = lngLine + 1
+    Loop
+
+    ' Ensure that we correctly processed the nested block sequence.
+    If this.colBlocks.Count > 0 Then
+        Log.Error eelWarning, MultiReplace( _
+            "Found ${BlockCount} unclosed blocks after sanitizing ${File}.", _
+            "${BlockCount}", this.colBlocks.Count, _
+            "${File}", Nz2(Me.ObjectName, this.strFilePath)), _
+            ModuleName(Me) & ".SanitizeFile"
+    End If
+
+    ' Normalize form designer viewport coordinates
+    If this.intObjectType = edbForm Then
+        If intSanitizeLevel >= eslStandard Then
+            If lngExportFormat >= EFV_5_0_0 Then NormalizeViewport astrLines
+            If lngExportFormat >= EFV_5_1_0 Then
+                If blnNeedsFormGeometry Then
+                    With New clsFormGeometryCanonicalizer
+                        .Canonicalize astrLines, Me.ObjectName
+                    End With
+                End If
+            End If
+        End If
+    End If
+
+    ' Decode captured CF14 before building output so failed blocks stay inline.
+    If blnStripCF Then ResolveCapturedConditionalFormats
+
+    ' Prepare primary output
+    this.strOutput = BuildOutput(astrLines)
+    Erase m_blnSkipLine
+    SanitizeObject = this.strOutput
+
+    ' Prepare VBA output (if used)
+    If Not cVBA Is Nothing Then
+        ' Build sanitized VBA string
+        With New clsSourceParser
+            .LoadString cVBA.GetStr, edbModule
+            this.strVBA = .Sanitize(ectVBA)
+        End With
+    End If
+
+    ' Log performance
+    Set this.colBlocks = Nothing
+    Perf.OperationEnd
+    Log.Add "    Sanitized in " & Format$(Perf.MicroTimer - curStart, "0.000") & " seconds.", Options.ShowDebug
+
+    ' Log any errors
+    CatchAny eelError, "Error sanitizing " & Nz2(Me.ObjectName, FSO.GetFileName(this.strFilePath)), ModuleName(Me) & ".SanitizeFile"
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : BuildOutput
+' Author    : Adam Waller
+' Date      : 6/4/2021
+' Purpose   : Splitting this out into its own sub to reduce complexity.
+'---------------------------------------------------------------------------------------
+'
+Private Function BuildOutput(ByRef astrLines() As String) As String
+
+    Dim cData As clsConcat
+    Dim lngLine As Long
+
+    ' Use concatenation class to maximize performance
+    Set cData = New clsConcat
+    With cData
+        .AppendOnAdd = vbCrLf
+
+        ' Loop through array of lines in source file
+        For lngLine = 0 To UBound(astrLines)
+            If Not m_blnSkipLine(lngLine) Then .Add astrLines(lngLine)
+        Next lngLine
+
+        ' Remove last vbcrlf
+        cData.Remove Len(vbCrLf)
+
+        ' Return assembled output
+        BuildOutput = .GetStr
+    End With
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : StripClassHeader
+' Author    : Adam Waller
+' Date      : 10/24/2023
+' Purpose   : Strip the class header section from the VBA content. (Remove the version
+'           : and VBE attributes lines that come before the actual VBA code.)
+'---------------------------------------------------------------------------------------
+'
+Public Function StripClassHeader(strContent As String, blnStripNameOnly As Boolean) As String
+
+    Dim lngLine As Long
+    Dim varLines As Variant
+    Dim strLine As String
+    Dim blnPastHeader As Boolean
+
+    ' Split code into lines
+    varLines = Split(strContent, vbCrLf)
+
+    With New clsConcat
+        .AppendOnAdd = vbCrLf
+
+        ' Skip the header information saved in the VBA class
+        For lngLine = 0 To UBound(varLines)
+            If Not blnPastHeader Then
+                strLine = varLines(lngLine)
+                If blnStripNameOnly Then
+                    If StartsWith(strLine, "Attribute VB_Name = ") Then
+                        ' Just skip that line. Keep everything else.
+                        blnPastHeader = True
+                    Else
+                        .Add CStr(varLines(lngLine))
+                    End If
+                Else
+                    Select Case True
+                        Case (strLine = "VERSION 1.0 CLASS")
+                        Case (strLine = "BEGIN")
+                        Case (strLine = "  MultiUse = -1  'True")
+                        Case (strLine = "END")
+                        Case StartsWith(strLine, "Attribute VB_")
+                        Case Else
+                            blnPastHeader = True
+                            .Add CStr(varLines(lngLine))
+                    End Select
+                End If
+            Else
+                ' Add remaining lines
+                .Add CStr(varLines(lngLine))
+            End If
+        Next lngLine
+
+        ' remove trailing CrLf and return result
+        .Remove 2
+        StripClassHeader = .GetStr
+    End With
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : SkipLine
+' Author    : Adam Waller
+' Date      : 6/4/2021
+' Purpose   : Skip this line in the final output file. Optionally include a minimum
+'           : sanitize level to skip this line.
+'---------------------------------------------------------------------------------------
+'
+Private Sub SkipLine(lngLine As Long, Optional intMinSanitizeLevel As eSanitizeLevel)
+    If Options.SanitizeLevel >= intMinSanitizeLevel Then m_blnSkipLine(lngLine) = True
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : SanitizeCodeLines
+' Author    : Adam Waller
+' Date      : 7/11/2023
+' Purpose   : Perform any sanitizing of code lines.
+'---------------------------------------------------------------------------------------
+'
+Private Sub SanitizeCodeLines(lngLineStart As Long, ByRef astrLines() As String)
+
+    Dim lngLine As Long
+
+    Perf.OperationStart "Sanitize Code Lines"
+    For lngLine = lngLineStart To UBound(astrLines)
+        ' Check for lines that include only space padding
+        ' added by the IDE automatic indenting. (The padding is removed if you
+        ' comment out a block, then uncomment the same block, causing unwanted
+        ' noise in version control.)
+        If Len(astrLines(lngLine)) > 0 Then
+            If Trim(astrLines(lngLine)) = vbNullString Then
+                ' Remove the space padding
+                astrLines(lngLine) = vbNullString
+            End If
+        End If
+    Next lngLine
+    Perf.OperationEnd
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : BeginBlock
+' Author    : Adam Waller
+' Date      : 6/4/2021
+' Purpose   : Add a dictionary object to represent the block
+'---------------------------------------------------------------------------------------
+'
+Private Sub BeginBlock(Optional strType As String)
+    Dim dBlock As Dictionary
+    If this.colBlocks Is Nothing Then Set this.colBlocks = New Collection
+    Set dBlock = New Dictionary
+    If strType <> vbNullString Then dBlock.Add "Type", strType
+    this.colBlocks.Add dBlock
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : CloseBlock
+' Author    : Adam Waller
+' Date      : 6/4/2021
+' Purpose   : Determine if the block used any theme-based dynamic colors that should
+'           : be skipped in the output file. (See issue #183)
+'---------------------------------------------------------------------------------------
+'
+Private Sub CloseBlock(intSanitizeColors As eSanitizeLevel)
+
+    Dim lngI As Long
+    Dim dBlock As Dictionary
+    Dim strKey As String
+    Dim varBase As Variant
+
+    ' Skip if we are not using aggressive color sanitize
+    If intSanitizeColors <= eslNone Then Exit Sub
+
+    ' Bail out if we don't have a block to review
+    If this.colBlocks.Count = 0 Then Exit Sub
+    Set dBlock = this.colBlocks(this.colBlocks.Count)
+
+    ' Skip if we are not using themes for this control (UseTheme=0)
+    ' (Applies to "CommandButton", "Tab", "ToggleButton")
+    If dBlock.Exists("UseTheme") Then
+        ' Remove this block
+        this.colBlocks.Remove this.colBlocks.Count
+        Exit Sub
+    End If
+
+    varBase = Array("Back", "AlternateBack", "Border", _
+        "Fore", "Gridline", "HoverFore", _
+        "Hover", "PressedFore", "Pressed", _
+        "DatasheetFore", "DatasheetBack", "DatasheetGridlines")
+
+    ' Loop through properties, checking for index
+    For lngI = 0 To UBound(varBase)
+        strKey = varBase(lngI) & "ThemeColorIndex"
+        If dBlock.Exists(strKey) Then
+            If dBlock(strKey) <> NO_THEME_INDEX Then
+                ' Check for corresponding color property
+                strKey = varBase(lngI) & "Color"
+                If dBlock.Exists(strKey) Then
+                    ' Skip the dynamic color line
+                    SkipLine dBlock(strKey)
+                End If
+            End If
+        Else
+            Select Case dBlock("Type")
+                Case "Section", "FormHeader", "FormFooter"
+                    ' Some controls like form sections don't use color values
+                    ' if a theme index is specified. If a color value exists,
+                    ' we should preserve it.
+                Case Else
+                    ' Most controls automatically use theme indexes
+                    ' unless otherwise specified.
+                    ' As discussed in #183, this can be affected by incomplete
+                    ' component definition blocks.
+                    If intSanitizeColors = eslExtended Then
+                        strKey = varBase(lngI) & "Color"
+                        If dBlock.Exists(strKey) Then
+                            ' Skip the dynamic color line
+                            SkipLine dBlock(strKey)
+                        End If
+                    End If
+            End Select
+        End If
+    Next lngI
+
+    ' Remove this block
+    this.colBlocks.Remove this.colBlocks.Count
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : IsQueryNameAliasBlock
+' Author    : Adam Waller
+' Date      : 3/25/2025
+' Purpose   : Determine if this is simply an alias of the field name with no other
+'           : properties. (These come and go depending on the internal compilation
+'           : of the query, causing unwanted noise in souce code.)
+'           : These blocks can be safely removed with no impact on the database.
+'---------------------------------------------------------------------------------------
+'
+Private Function IsQueryNameAliasBlock(lngLine As Long, ByRef astrLines() As String) As Boolean
+
+    Dim lngNext As Long
+    Dim lngUpper As Long
+
+    ' This only applies to queries
+    If this.intObjectType <> edbQuery Then Exit Function
+
+    ' Make sure we have additional lines to check
+    lngUpper = UBound(astrLines)
+    If lngUpper < lngLine + 2 Then Exit Function
+
+    ' Look at the next two lines to see if we are just dealing with an alias block
+    If StartsWith(Trim(astrLines(lngLine + 1)), "dbText ""Name"" =") Then
+
+        ' Skip past any GUID lines
+        lngNext = lngLine + 2
+        If StartsWith(Trim(astrLines(lngNext)), "dbBinary ""GUID"" = Begin") Then lngNext = lngNext + 3
+        If lngNext > lngUpper Then Exit Function
+
+        ' See if the following line closes the block
+        If Trim(astrLines(lngNext)) = "End" Then
+            ' Yes, this was simply a name alias block
+            IsQueryNameAliasBlock = True
+        End If
+    End If
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : CheckColorProperties
+' Author    : Adam Waller
+' Date      : 6/4/2021
+' Purpose   : Use an index to reference color properties so we can determine any lines
+'           : that we need to discard after finishing the block.
+'---------------------------------------------------------------------------------------
+'
+Private Sub CheckColorProperties(strTLine As String, lngLine As Long, _
+    intSanitizeColors As eSanitizeLevel)
+
+    Dim dBlock As Dictionary
+    Dim lngCnt As Long
+    Dim lngColor As Long
+    Dim lngEqPos As Long
+    Dim strProp As String
+    Dim strValue As String
+
+    ' Skip if not using this option
+    If intSanitizeColors <= eslNone Then Exit Sub
+
+    ' Exit if we are not inside a block
+    If Not this.colBlocks Is Nothing Then lngCnt = this.colBlocks.Count
+    If lngCnt = 0 Then Exit Sub
+    Set dBlock = this.colBlocks(this.colBlocks.Count)
+
+    lngEqPos = InStr(1, strTLine, " =")
+    If lngEqPos <= 1 Then Exit Sub
+    strProp = Left$(strTLine, lngEqPos - 1)
+    strValue = Mid$(strTLine, lngEqPos + 2)
+    Select Case strProp
+
+        ' Theme color index properties
+        Case "BackThemeColorIndex", "AlternateBackThemeColorIndex", "BorderThemeColorIndex", _
+            "ForeThemeColorIndex", "GridlineThemeColorIndex", "HoverForeThemeColorIndex", _
+            "HoverThemeColorIndex", "PressedForeThemeColorIndex", "PressedThemeColorIndex", _
+            "DatasheetBackThemeColorIndex", "DatasheetForeThemeColorIndex", "DatasheetGridlinesThemeColorIndex"
+            ' Save to dictionary if using a theme index color
+            dBlock.Add strProp, strValue
+
+        ' Matching color properties
+        Case "BackColor", "AlternateBackColor", "BorderColor", _
+            "ForeColor", "GridlineColor", "HoverForeColor", _
+            "HoverColor", "PressedForeColor", "PressedColor", _
+            "DatasheetBackColor", "DatasheetForeColor", "DatasheetGridlinesColor"
+
+            ' Check for system color constants
+            If IsNumeric(strValue) Then lngColor = strValue
+            If lngColor < 0 Then
+                ' Using a system color constant or other Access constant value.
+                ' https://stackoverflow.com/a/30396550/4121863
+                ' Leave this color value intact.
+            Else
+                ' Save line of color property
+                dBlock.Add strProp, lngLine
+            End If
+
+        Case "UseTheme"
+            ' You can tell certain controls to not use the theme. (Buttons, Tabs, Toggles)
+            If strValue = 0 Then dBlock.Add strProp, 0
+
+        Case Else
+            ' Check for other related dynamic color properties/indexes
+            If StartsWith(strTLine, "DatasheetGridlinesColor") Then
+                ' May include the index number in the property name. (I.e. DatasheetGridlinesColor12 =0)
+                ' Convert to a more consistent identifier, using the index suffix as the value.
+                dBlock.Add "DatasheetGridlinesThemeColorIndex", Mid$(strProp, 24)
+            End If
+
+    End Select
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : NormalizeViewport
+' Author    : Adam Waller
+' Date      : 10/29/2025
+' Purpose   : Standardize the coordinates of the saved viewport to ensure consistent
+'           : output across various monitor configurations. Note that these are not
+'           : reflective of the actual form size, but the designer viewport at the
+'           : time that the form was saved.
+'           : Note that the hardcoded values are somewhat arbitrary, and will be
+'           : recomputed the next time the form is saved in design view. (Typically
+'           : during the IntitializeForms process.)
+'---------------------------------------------------------------------------------------
+'
+Private Sub NormalizeViewport(ByRef astrLines() As String)
+
+    Dim lngLine As Long
+    Dim strLine As String
+
+    For lngLine = 1 To UBound(astrLines)
+        strLine = astrLines(lngLine)
+        ' Look for specific lines
+        Select Case True
+            ' Save current coordinate positions
+            Case StartsWith(strLine, "    Left ="):     astrLines(lngLine) = "    Left =1000"
+            Case StartsWith(strLine, "    Top ="):      astrLines(lngLine) = "    Top =1000"
+            Case StartsWith(strLine, "    Right ="):    astrLines(lngLine) = "    Right =50000"
+            Case StartsWith(strLine, "    Bottom ="):   astrLines(lngLine) = "    Bottom =50000": Exit For
+        End Select
+    Next lngLine
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : SanitizeVBA
+' Author    : Adam Waller
+' Date      : 7/12/2023
+' Purpose   : Standardizes blank line padding and trailing lines in VBA code content.
+'           : NOTE: This does not make any code changes, but only modifies padding
+'           : and blank lines to generate standardized output for version control.
+'           :
+'           : OPERATIONS:
+'           :   - Trim blank lines that only include space padding.
+'           :   - Remove extra trailing lines from the end of the module.
+'---------------------------------------------------------------------------------------
+'
+Private Function SanitizeVBA() As String
+
+    Dim lngLine As Long
+    Dim varLines As Variant
+    Dim lngLastLine As Long
+
+    ' Skip sanitizing if not using that option.
+    If Options.SanitizeLevel < eslStandard Then
+        this.strOutput = this.strInput
+        this.strVBA = this.strOutput
+        SanitizeVBA = this.strOutput
+        Exit Function
+    End If
+
+    Perf.OperationStart "Sanitize VBA Code"
+
+    ' Split code into lines
+    varLines = Split(this.strInput, vbCrLf)
+
+    ' Build sanitized content
+    With New clsConcat
+        .AppendOnAdd = vbCrLf
+
+        ' Find the last non-blank line
+        For lngLine = UBound(varLines) To 0 Step -1
+            If Len(Trim(varLines(lngLine))) > 0 Then
+                lngLastLine = lngLine
+                Exit For
+            End If
+        Next lngLine
+
+        ' Loop through lines
+        For lngLine = 0 To lngLastLine
+            .Add RTrim(varLines(lngLine))
+        Next lngLine
+
+        ' Return standardized code block
+        this.strOutput = .GetStr
+        this.strVBA = this.strOutput
+        SanitizeVBA = this.strOutput
+        Perf.OperationEnd
+    End With
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : SanitizeXML
+' Author    : Adam Waller
+' Date      : 4/29/2021
+' Purpose   : Remove non-essential data that changes every time the file is exported.
+'           : Optionally returns a hash of the file content. (To save reading the file
+'           : back again afterwards to compute the hash.)
+'---------------------------------------------------------------------------------------
+'
+Private Function SanitizeXML() As String
+
+    Dim curStart As Currency
+    Dim cData As clsConcat
+    Dim strXml As String
+    Dim rxLine As VBScript_RegExp_55.RegExp
+
+    If DebugMode(True) Then On Error GoTo 0 Else On Error Resume Next
+
+    Set cData = New clsConcat
+    cData.AppendOnAdd = vbCrLf
+    Set rxLine = New VBScript_RegExp_55.RegExp
+
+    Perf.OperationStart "Sanitize XML"
+    curStart = Perf.MicroTimer
+    strXml = this.strInput
+
+    ' Exporting Table Def as XML does not properly encode ampersand character (See #314)
+    ' Most likely if any ampersands are encoded correctly, all of them will be.
+    With New VBScript_RegExp_55.RegExp
+        .Multiline = True
+        .Global = True
+        ' Match &amp; &quot; &gt; &lt; etc...
+        .Pattern = "&[A-z]{2,6};"
+        If Not .Test(strXml) Then
+            ' Properly encode any embedded ampersand characters to make valid XML
+            strXml = Replace(strXml, "&", "&amp;")
+        End If
+    End With
+
+    Static objXml As MSXML2.DOMDocument60
+    Dim objNode As MSXML2.IXMLDOMNode
+
+    If objXml Is Nothing Then
+        Set objXml = New MSXML2.DOMDocument60
+    End If
+
+    If objXml.LoadXML(strXml) = False Then
+        Log.Error eelError, _
+            "Unable to parse the XML for file '" & Nz2(this.strFilePath, Me.ObjectName) & _
+            "'. This may be due to containing malformed XML. Check the source XML document for validity. " & _
+            "In some cases, this may be due to table data containing characters not allowed in XML documents.", _
+            ModuleName(Me) & ".SanitizeXML"
+        Exit Function
+    End If
+
+    ' Determine if it's a table data with schema
+    For Each objNode In objXml.SelectNodes("/root/dataroot")
+        ' Remove the generated timestamp attribute to reduce noise
+        '   <dataroot xmlns:od="urn:schemas-microsoft-com:officedata" generated="2020-04-27T10:28:32">
+        '   <dataroot generated="2021-04-29T17:27:33" xmlns:od="urn:schemas-microsoft-com:officedata">
+        objNode.Attributes.removeNamedItem "generated"
+
+        ' Determine whether the schema is required for import. If the schema contains elements:
+        '   <xsd:element od:expression ...>
+        '   <xsd:element od:jetType="complex" ...>
+        '   <xsd:element od:jetType="oleobject" ...>
+        ' Then the schema must be retained. Otherwise, discard the schema and retain only the data.
+        If objXml.SelectNodes("//*[(namespace-uri()='http://www.w3.org/2001/XMLSchema' and local-name()='element' and @*[namespace-uri()='urn:schemas-microsoft-com:officedata' and ((local-name()='jetType' and (string()='complex' or string()='oleobject')) or (local-name()='expression'))])]").Length = 0 Then
+            objXml.replaceChild objXml.SelectSingleNode("/root/dataroot"), objXml.SelectSingleNode("/root")
+        End If
+    Next
+
+    ' Remove generated timestamp from tables exported without schema (such as linked tables)
+    For Each objNode In objXml.SelectNodes("/dataroot")
+        objNode.Attributes.removeNamedItem "generated"
+    Next
+
+    ' Remove all nodes that are meaningless noise:
+    '   <od:tableProperty name="NameMap" ...>
+    '   <od:tableProperty name="GUID" ...>
+    '   <od:fieldProperty name="GUID" ...>
+    For Each objNode In objXml.SelectNodes("//*[(namespace-uri()='urn:schemas-microsoft-com:officedata' and local-name()='tableProperty' and (@name='NameMap' or @name='GUID')) or (namespace-uri()='urn:schemas-microsoft-com:officedata' and local-name()='fieldProperty' and @name='GUID')]")
+        objNode.ParentNode.RemoveChild objNode
+    Next
+
+    If Options.StripPublishOption Then
+        ' Remove all web publish options:
+        '   <od:tableProperty name="PublishToWeb" ...>
+        For Each objNode In objXml.SelectNodes("//*[(namespace-uri()='urn:schemas-microsoft-com:officedata' and local-name()='tableProperty' and @name='PublishToWeb')]")
+            objNode.ParentNode.RemoveChild objNode
+        Next
+    End If
+
+    ' Table definitions only. SanitizeXML is shared with table data, where these nodes are
+    ' almost never present and the document can run to many megabytes.
+    If this.intObjectType = edbTableDef Then
+        If Options.ExportFormatVersion >= EFV_5_1_0 Then SortXmlPropertyNodes objXml
+    End If
+
+    If Not Me.RowSortFields Is Nothing Then
+        If Me.RowSortFields.Count > 0 Then SortXmlDataRows objXml
+    End If
+
+    Perf.OperationEnd
+
+    ' Check string length to determine which formatter to use.
+    ' (XSLT does a better job, but may fail on large sets of data)
+    If Len(strXml) < 30000 Then
+        ' Use XSLT to format the XML output.
+        this.strOutput = FormatXML(objXml)
+    Else
+        ' For very large XML strings like exporting data from large tables,
+        ' use an alternate simplified formatting function that avoids
+        ' the memory errors than can occur with XSLT.
+        this.strOutput = FormatXML2(objXml.XML)
+    End If
+
+    ' Save the output
+    SanitizeXML = this.strOutput
+
+    ' Show stats if debug turned on.
+    Log.Add "    Sanitized in " & Format$(Perf.MicroTimer - curStart, "0.000") & " seconds.", Options.ShowDebug
+
+    ' Log any errors
+    CatchAny eelError, "Error sanitizing XML for " & Nz2(FSO.GetFileName(this.strFilePath), Me.ObjectName), ModuleName(Me) & ".SanitizeXML"
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : SortXmlDataRows
+' Author    : Adam Waller
+' Date      : 7/27/2026
+' Purpose   : Reorder exported table-data row elements for deterministic XML output.
+'---------------------------------------------------------------------------------------
+'
+Private Sub SortXmlDataRows(objXml As MSXML2.DOMDocument60)
+
+    Dim objRoot As MSXML2.IXMLDOMElement
+    Dim objRows As MSXML2.IXMLDOMNodeList
+    Dim lngCount As Long
+    Dim lngIdx As Long
+    Dim astrKeys() As String
+    Dim varSortedIdx() As Long
+    Dim blnNeedsSort As Boolean
+    Dim colSorted As Collection
+
+    Set objRoot = objXml.documentElement
+    If objRoot Is Nothing Then Exit Sub
+    If LCase$(objRoot.nodeName) <> "dataroot" Then
+        Set objRoot = objXml.SelectSingleNode("//dataroot")
+    End If
+    If objRoot Is Nothing Then Exit Sub
+
+    Set objRows = objRoot.ChildNodes
+    lngCount = objRows.Length
+    If lngCount < 2 Then Exit Sub
+
+    ReDim astrKeys(0 To lngCount - 1)
+    ReDim varSortedIdx(0 To lngCount - 1)
+    blnNeedsSort = False
+
+    For lngIdx = 0 To lngCount - 1
+        astrKeys(lngIdx) = BuildXmlRowSortKey(objRows.Item(lngIdx), lngIdx)
+        If lngIdx > 0 Then
+            If StrComp(astrKeys(lngIdx), astrKeys(lngIdx - 1), vbBinaryCompare) < 0 Then blnNeedsSort = True
+        End If
+    Next lngIdx
+
+    If Not blnNeedsSort Then Exit Sub
+
+    QuickSortStringsBinary astrKeys
+
+    For lngIdx = 0 To lngCount - 1
+        varSortedIdx(lngIdx) = XmlSortKeyOrdinal(astrKeys(lngIdx))
+    Next lngIdx
+
+    Set colSorted = New Collection
+    For lngIdx = 0 To lngCount - 1
+        colSorted.Add objRows.Item(varSortedIdx(lngIdx))
+    Next lngIdx
+
+    For lngIdx = lngCount - 1 To 0 Step -1
+        objRoot.RemoveChild objRoot.FirstChild
+    Next lngIdx
+
+    For lngIdx = 1 To colSorted.Count
+        objRoot.appendChild colSorted(lngIdx)
+    Next lngIdx
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : SortXmlPropertyNodes
+' Author    : Adam Waller
+' Date      : 7/30/2026
+' Purpose   : Sort od:tableProperty and od:fieldProperty siblings by name within each
+'           : xsd:appinfo block, so the exported order does not depend on how the table
+'           : was created.
+'           :
+'           : Why this is needed: Access emits these in DAO Properties collection order,
+'           : and that order differs between a table built by Application.ImportXML (which
+'           : reproduces the order of the file it read) and one built through DAO (where
+'           : Required and AllowZeroLength are intrinsic members and always lead). The two
+'           : exports hold the same properties with the same values in a different
+'           : sequence, which is enough to fail a byte comparison. It cannot be fixed on
+'           : the DAO side -- the intrinsic members cannot be moved, deleted, or
+'           : re-appended (error 3367). Canonicalizing here lets modTableDefBuilder's
+'           : output match source without relaxing the byte comparison that guards it.
+'           :
+'           : Plain alphabetical is safe, which is not obvious. Access's own emission
+'           : order looks like it encodes a dependency: the lookup chain from
+'           : DisplayControl through RowSourceType, RowSource, BoundColumn, ColumnCount
+'           : and ColumnHeads to ColumnWidths never inverts once across four databases,
+'           : and issue 691 blamed alphabetical ordering for losing ColumnCount and
+'           : ColumnWidths. That turned out to be how Access serializes, not a constraint
+'           : it enforces on read. Applying the chain in alphabetical order was measured
+'           : to restore every value correctly through ImportXML, through DAO on a local
+'           : table, and through DAO on a linked table, with both a value list and a
+'           : Table/Query row source. See DECISIONS.md 2026-07-31 before adding a
+'           : dependency-ordered rank table here.
+'           :
+'           : Index nodes share the appinfo block and are deliberately left alone; their
+'           : order is preserved by re-inserting the sorted properties at the position the
+'           : first one occupied.
+'---------------------------------------------------------------------------------------
+'
+Private Sub SortXmlPropertyNodes(objXml As MSXML2.DOMDocument60)
+
+    Dim objAppInfo As MSXML2.IXMLDOMNode
+
+    ' One document scan covers both property kinds. The caller gates this to table
+    ' definitions, so the scan is never paid on a large table-data export.
+    For Each objAppInfo In objXml.SelectNodes( _
+        "//*[namespace-uri()='" & NS_XSD_URI & "' and local-name()='appinfo']")
+        SortPropertyGroup objXml, objAppInfo, "tableProperty"
+        SortPropertyGroup objXml, objAppInfo, "fieldProperty"
+    Next objAppInfo
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : SortPropertyGroup
+' Author    : Adam Waller
+' Date      : 7/31/2026
+' Purpose   : Sort one kind of property element by name within a single appinfo block,
+'           : leaving every other child of that block where it was.
+'---------------------------------------------------------------------------------------
+'
+' ByVal on the node and name: callers pass a For Each loop variable and a literal, and
+' MSXML interface parameters are the same ByRef mismatch trap seen in modTableDefBuilder.
+Private Sub SortPropertyGroup(objXml As MSXML2.DOMDocument60, _
+    ByVal objAppInfo As MSXML2.IXMLDOMNode, ByVal strLocalName As String)
+
+    Dim objNode As MSXML2.IXMLDOMNode
+    Dim objName As MSXML2.IXMLDOMNode
+    Dim objMarker As MSXML2.IXMLDOMNode
+    Dim colNodes As Collection
+    Dim astrKeys() As String
+    Dim lngIdx As Long
+    Dim blnNeedsSort As Boolean
+
+    ' Snapshot the matching children. The list has to be materialized before anything is
+    ' moved, because removing a node shifts the ones behind it.
+    Set colNodes = New Collection
+    For Each objNode In objAppInfo.ChildNodes
+        If objNode.NamespaceURI = NS_OD_URI And objNode.baseName = strLocalName Then
+            colNodes.Add objNode
+        End If
+    Next objNode
+
+    If colNodes.Count < 2 Then Exit Sub
+
+    ReDim astrKeys(0 To colNodes.Count - 1)
+
+    For lngIdx = 0 To colNodes.Count - 1
+        Set objName = colNodes(lngIdx + 1).Attributes.getNamedItem("name")
+        If objName Is Nothing Then
+            ' A property with no name is not something we can order predictably.
+            Exit Sub
+        End If
+        astrKeys(lngIdx) = objName.Text & Format$(lngIdx, "0000000000")
+        If lngIdx > 0 Then
+            If StrComp(astrKeys(lngIdx), astrKeys(lngIdx - 1), vbBinaryCompare) < 0 Then
+                blnNeedsSort = True
+            End If
+        End If
+    Next lngIdx
+
+    If Not blnNeedsSort Then Exit Sub
+
+    ' Hold the insertion point, since the nodes themselves are about to move. A comment
+    ' rather than an empty text node, which MSXML may coalesce away.
+    Set objMarker = objAppInfo.InsertBefore(objXml.createComment("vcs-sort"), colNodes(1))
+
+    For lngIdx = 1 To colNodes.Count
+        objAppInfo.RemoveChild colNodes(lngIdx)
+    Next lngIdx
+
+    QuickSortStringsBinary astrKeys
+
+    For lngIdx = 0 To UBound(astrKeys)
+        objAppInfo.InsertBefore colNodes(XmlSortKeyOrdinal(astrKeys(lngIdx)) + 1), objMarker
+    Next lngIdx
+
+    objAppInfo.RemoveChild objMarker
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Function  : BuildXmlRowSortKey
+' Author    : Adam Waller
+' Date      : 7/27/2026
+' Purpose   : Build a lexical sort key for one exported table-data row element.
+'---------------------------------------------------------------------------------------
+'
+Private Function BuildXmlRowSortKey(objRow As MSXML2.IXMLDOMNode, lngOrdinal As Long) As String
+
+    Dim varKey As Variant
+    Dim objChild As MSXML2.IXMLDOMNode
+    Dim strFieldName As String
+    Dim strXmlName As String
+    Dim strPart As String
+    Dim blnFound As Boolean
+    Dim colParts As New Collection
+
+    For Each varKey In Me.RowSortFields.Keys
+        strFieldName = CStr(varKey)
+        strXmlName = EscapeXmlName(strFieldName)
+        blnFound = False
+        For Each objChild In objRow.ChildNodes
+            If objChild.NodeType = NODE_ELEMENT Then
+                If StrComp(objChild.baseName, strXmlName, vbTextCompare) = 0 _
+                    Or StrComp(objChild.nodeName, strXmlName, vbTextCompare) = 0 Then
+                    strPart = NormalizeXmlSortValue(objChild.Text, Me.RowSortFields(strFieldName))
+                    blnFound = True
+                    Exit For
+                End If
+            End If
+        Next objChild
+        If Not blnFound Then
+            strPart = NormalizeXmlSortValue(vbNullString, Me.RowSortFields(strFieldName), True)
+        End If
+        colParts.Add strPart
+    Next varKey
+
+    BuildXmlRowSortKey = ComposeXmlSortKey(colParts, lngOrdinal)
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : SubstituteEnvConnect
+' Author    : Adam Waller
+' Date      : 03/17/2026
+' Purpose   : Replace a pass-through query Connect value with an env: reference if
+'           : applicable. Handles multi-line dbMemo values where long connection
+'           : strings wrap across continuation lines (indented, starting with ").
+'---------------------------------------------------------------------------------------
+'
+Private Sub SubstituteEnvConnect(lngLine As Long, ByRef astrLines() As String)
+
+    Dim strFullConnect As String
+    Dim strEnvKey As String
+    Dim lngNext As Long
+    Dim strFragment As String
+
+    ' Extract the quoted value from the first line
+    ' Format: dbMemo "Connect" ="value"
+    strFullConnect = ExtractQuotedDbMemo(astrLines(lngLine))
+
+    ' Collect continuation lines (indented, starting with ")
+    lngNext = lngLine + 1
+    Do While lngNext <= UBound(astrLines)
+        strFragment = astrLines(lngNext)
+        ' Continuation lines are indented and start with "
+        If Len(strFragment) > 0 And Left$(LTrim$(strFragment), 1) = """" Then
+            If Len(strFragment) <> Len(LTrim$(strFragment)) Then
+                strFullConnect = strFullConnect & ExtractQuotedFragment(strFragment)
+                lngNext = lngNext + 1
+            Else
+                Exit Do
+            End If
+        Else
+            Exit Do
+        End If
+    Loop
+
+    ' Check if env substitution applies
+    strEnvKey = ShouldUseEnvForConnection(strFullConnect)
+    If Len(strEnvKey) = 0 Then Exit Sub
+
+    ' Save the full (unsanitized) connection string to the .env file
+    SaveConnectionToEnv strEnvKey, strFullConnect, _
+        Nz2(Me.ObjectName, "query") & " (pass-through query)"
+
+    ' Replace the first line with the env reference
+    astrLines(lngLine) = "dbMemo ""Connect"" =""env:" & strEnvKey & """"
+
+    ' Skip all continuation lines that were part of the original value
+    Dim lngSkipLine As Long
+    For lngSkipLine = lngLine + 1 To lngNext - 1
+        SkipLine lngSkipLine
+    Next lngSkipLine
+
+    this.blnOutputModified = True
+
+End Sub
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ExtractQuotedDbMemo
+' Author    : Adam Waller
+' Date      : 03/17/2026
+' Purpose   : Extract the quoted value from a dbMemo line.
+'           : Input:  dbMemo "Connect" ="ODBC;DRIVER={SQL Server}"
+'           : Output: ODBC;DRIVER={SQL Server}
+'---------------------------------------------------------------------------------------
+'
+Private Function ExtractQuotedDbMemo(strLine As String) As String
+
+    Dim lngStart As Long
+    Dim lngEnd As Long
+
+    ' Find =" which starts the value
+    lngStart = InStr(1, strLine, "=""")
+    If lngStart > 0 Then
+        lngStart = lngStart + 2
+        ' Find the closing quote
+        lngEnd = InStrRev(strLine, """")
+        If lngEnd > lngStart Then
+            ExtractQuotedDbMemo = Mid$(strLine, lngStart, lngEnd - lngStart)
+        End If
+    End If
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : ExtractQuotedFragment
+' Author    : Adam Waller
+' Date      : 03/17/2026
+' Purpose   : Extract the quoted content from a continuation line.
+'           : Input:     ";UID=user;PWD=password;DATABASE=mydb"
+'           : Output: ;UID=user;PWD=password;DATABASE=mydb
+'---------------------------------------------------------------------------------------
+'
+Private Function ExtractQuotedFragment(strLine As String) As String
+
+    Dim strTrimmed As String
+    Dim lngStart As Long
+    Dim lngEnd As Long
+
+    strTrimmed = LTrim$(strLine)
+    If Left$(strTrimmed, 1) = """" Then
+        lngStart = 2
+        lngEnd = InStrRev(strTrimmed, """")
+        If lngEnd > lngStart Then
+            ExtractQuotedFragment = Mid$(strTrimmed, lngStart, lngEnd - lngStart)
+        End If
+    End If
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : GetIndent
+' Author    : Adam Waller
+' Date      : 11/5/2020
+' Purpose   : Returns the number of spaces until the first non-space character.
+'---------------------------------------------------------------------------------------
+'
+Private Function GetIndent(strLine As Variant) As Integer
+    Dim strChar As String
+    strChar = Left$(Trim(strLine), 1)
+    If strLine <> vbNullString Then GetIndent = InStr(1, strLine, strChar) - 1
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : FormatXML
+' Author    : Adam Waller
+' Date      : 4/22/2021
+' Purpose   : Format XML content for consistent and readable output.
+'---------------------------------------------------------------------------------------
+'
+Private Function FormatXML(objInput As MSXML2.DOMDocument60, _
+                            Optional blnOmitDeclaration As Boolean) As String
+
+    ' XSLT stylesheet that allow us to control indenting and also get a better indent result.
+    ' For testing and adjusting, you can use https://www.online-toolz.com/tools/xslt-validator-tester-online.php
+    'Const strIndentXslt As String = "<xsl:stylesheet xmlns:xsl=""http://www.w3.org/1999/XSL/Transform"" version=""1.0""><xsl:output method=""xml""/><xsl:template match=""@*""><xsl:copy/></xsl:template><xsl:template match=""text()""><xsl:value-of select=""normalize-space(.)""/></xsl:template><xsl:template match=""*""><xsl:param name=""indent"" select=""''""/><xsl:text>&#xA;</xsl:text><xsl:value-of select=""$indent""/><xsl:copy><xsl:apply-templates select=""@*|*|text()""><xsl:with-param name=""indent"" select=""concat($indent, '  ')""/></xsl:apply-templates></xsl:copy><xsl:if test=""count(../*)&gt;0 and ../*[last()]=. and not(following-sibling::*)""><xsl:text>&#xA;</xsl:text><xsl:value-of select=""substring($indent,3)""/></xsl:if></xsl:template></xsl:stylesheet>"
+    Const strIndentXslt As String = "<xsl:stylesheet xmlns:xsl=""http://www.w3.org/1999/XSL/Transform"" version=""1.0""><xsl:output method=""xml""/><xsl:template match=""@*""><xsl:copy/></xsl:template><xsl:template match=""*""><xsl:param name=""indent"" select=""''""/><xsl:text>&#xA;</xsl:text><xsl:value-of select=""$indent""/><xsl:copy><xsl:apply-templates select=""@*|*|text()""><xsl:with-param name=""indent"" select=""concat($indent, '  ')""/></xsl:apply-templates></xsl:copy><xsl:if test=""count(../*)&gt;0 and ../*[last()]=. and not(following-sibling::*)""><xsl:text>&#xA;</xsl:text><xsl:value-of select=""substring($indent,3)""/></xsl:if></xsl:template></xsl:stylesheet>"
+    ' This constant has the `omit-xml-declaration="yes"` added to remove XML declarations.
+    'Const strIndentXsltNoDeclarations As String = "<xsl:stylesheet xmlns:xsl=""http://www.w3.org/1999/XSL/Transform"" version=""1.0""><xsl:output method=""xml"" omit-xml-declaration=""yes""/><xsl:template match=""@*""><xsl:copy/></xsl:template><xsl:template match=""text()""><xsl:value-of select=""normalize-space(.)""/></xsl:template><xsl:template match=""*""><xsl:param name=""indent"" select=""''""/><xsl:text>&#xA;</xsl:text><xsl:value-of select=""$indent""/><xsl:copy><xsl:apply-templates select=""@*|*|text()""><xsl:with-param name=""indent"" select=""concat($indent, '  ')""/></xsl:apply-templates></xsl:copy><xsl:if test=""count(../*)&gt;0 and ../*[last()]=. and not(following-sibling::*)""><xsl:text>&#xA;</xsl:text><xsl:value-of select=""substring($indent,3)""/></xsl:if></xsl:template></xsl:stylesheet>"
+    Const strIndentXsltNoDeclarations As String = "<xsl:stylesheet xmlns:xsl=""http://www.w3.org/1999/XSL/Transform"" version=""1.0""><xsl:output method=""xml"" omit-xml-declaration=""yes""/><xsl:template match=""@*""><xsl:copy/></xsl:template><xsl:template match=""*""><xsl:param name=""indent"" select=""''""/><xsl:text>&#xA;</xsl:text><xsl:value-of select=""$indent""/><xsl:copy><xsl:apply-templates select=""@*|*|text()""><xsl:with-param name=""indent"" select=""concat($indent, '  ')""/></xsl:apply-templates></xsl:copy><xsl:if test=""count(../*)&gt;0 and ../*[last()]=. and not(following-sibling::*)""><xsl:text>&#xA;</xsl:text><xsl:value-of select=""substring($indent,3)""/></xsl:if></xsl:template></xsl:stylesheet>"
+
+    Static objTransform As MSXML2.DOMDocument60
+    Static objTransformNoDeclaration As MSXML2.DOMDocument60
+
+    Dim strOutput As String
+
+    ' Skip processing if no content to format
+    If objInput.ChildNodes.Length = 0 Then Exit Function
+
+    Perf.OperationStart "Format XML"
+
+    ' Trap any errors with parsing or formatting the XML
+    If DebugMode(True) Then On Error GoTo 0 Else On Error Resume Next
+
+    ' Transform the input; we don't want to use transformNodeToObject
+    ' because that would be defeated by MSXML reformatting when reading
+    ' from the XML property. We also cache the MSXML2.DOMDocument to
+    ' avoid paying the cost of loading the XSLT repeatedly.
+    If blnOmitDeclaration Then
+        If objTransformNoDeclaration Is Nothing Then
+            Set objTransformNoDeclaration = New MSXML2.DOMDocument60
+            objTransformNoDeclaration.LoadXML strIndentXsltNoDeclarations
+        End If
+        strOutput = objInput.transformNode(objTransformNoDeclaration)
+    Else
+        If objTransform Is Nothing Then
+            Set objTransform = New MSXML2.DOMDocument60
+            objTransform.LoadXML strIndentXslt
+        End If
+        strOutput = objInput.transformNode(objTransform)
+    End If
+
+    ' Check for any errors parsing the XML
+    If CatchAny(eelError, "Error parsing XML content", ModuleName(Me) & ".FormatXML") Then
+        ' Fall back to input XML
+        strOutput = objInput.XML
+        ' Output XML to log file
+        Log.Spacer False
+        Log.Add objInput.XML, False
+        Log.Spacer False
+    End If
+
+    ' Return formatted output
+    Perf.OperationEnd
+    FormatXML = strOutput
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : FormatXML2
+' Author    : Adam Waller
+' Date      : 12/12/2023
+' Purpose   : Alternate approach to formatting XML for use in large data sets where
+'           : the XSL transformation may encounter memory errors.
+'---------------------------------------------------------------------------------------
+'
+Private Function FormatXML2(strInput As String) As String
+
+    Dim varLines As Variant
+    Dim varLine As Variant
+    Dim lngChar As Long
+
+    Perf.OperationStart "Format XML (alt)"
+
+    ' Split file into lines
+    varLines = Split(strInput, vbCrLf)
+
+    With New clsConcat
+        .AppendOnAdd = vbCrLf
+
+        ' Loop through lines
+        For Each varLine In varLines
+
+            ' Reset position
+            lngChar = 1
+
+            ' Loop through leading characters, watching for tabs.
+            Do While lngChar < Len(varLine)
+                ' See if this is
+                Select Case AscW(Mid(varLine, lngChar, 1))
+                    Case vbKeyTab   ' 9
+                        ' Increment tab counter
+                        lngChar = lngChar + 1
+                    Case Else
+                        ' Some other character.
+                        Exit Do
+                End Select
+            Loop
+
+            ' Add line with any indent
+            .Add Space$((lngChar - 1) * 2), Mid(varLine, lngChar)
+
+        Next varLine
+
+        ' Remove trailing vbCrLf and return result
+        .Remove 2
+        FormatXML2 = .GetStr
+
+    End With
+
+    Perf.OperationEnd
+
+End Function
+
+
+'---------------------------------------------------------------------------------------
+' Procedure : Class_Terminate
+' Author    : Adam Waller
+' Date      : 10/25/2023
+' Purpose   : Release private objects when terminating
+'---------------------------------------------------------------------------------------
+'
+Private Sub Class_Terminate()
+    Set this.colBlocks = Nothing
+End Sub

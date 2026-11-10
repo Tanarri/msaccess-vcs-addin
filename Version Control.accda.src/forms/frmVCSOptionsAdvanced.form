@@ -1,0 +1,754 @@
+﻿Version =20
+VersionRequired =20
+Begin Form
+    RecordSelectors = NotDefault
+    NavigationButtons = NotDefault
+    DividingLines = NotDefault
+    AllowDesignChanges = NotDefault
+    DefaultView =0
+    PictureAlignment =2
+    DatasheetGridlinesBehavior =3
+    GridX =24
+    GridY =24
+    Width =6480
+    DatasheetFontHeight =11
+    ItemSuffix =34
+    Right =50000
+    Bottom =50000
+    RecSrcDt = Begin
+        0x587d60025082e640
+    End
+    DatasheetFontName ="Calibri"
+    OnLoad ="[Event Procedure]"
+    AllowDatasheetView =0
+    FilterOnLoad =0
+    ShowPageMargins =0
+    DisplayOnSharePointSite =1
+    DatasheetAlternateBackColor =15921906
+    DatasheetGridlinesColor12 =0
+    FitToScreen =1
+    DatasheetBackThemeColorIndex =1
+    BorderThemeColorIndex =3
+    ThemeFontIndex =1
+    ForeThemeColorIndex =0
+    AlternateBackThemeColorIndex =1
+    AlternateBackShade =95.0
+    Begin
+        Begin Label
+            BackStyle =0
+            FontSize =11
+            FontName ="Calibri"
+            ThemeFontIndex =1
+            BackThemeColorIndex =1
+            BorderThemeColorIndex =0
+            BorderTint =50.0
+            ForeThemeColorIndex =0
+            ForeTint =60.0
+            GridlineThemeColorIndex =1
+            GridlineShade =65.0
+        End
+        Begin Line
+            BorderLineStyle =0
+            BorderThemeColorIndex =0
+            GridlineThemeColorIndex =1
+            GridlineShade =65.0
+        End
+        Begin CommandButton
+            FontSize =11
+            FontWeight =400
+            FontName ="Calibri"
+            ForeThemeColorIndex =0
+            ForeTint =75.0
+            GridlineThemeColorIndex =1
+            GridlineShade =65.0
+            UseTheme =1
+            Shape =1
+            Gradient =12
+            BackThemeColorIndex =4
+            BackTint =60.0
+            BorderLineStyle =0
+            BorderThemeColorIndex =4
+            BorderTint =60.0
+            ThemeFontIndex =1
+            HoverThemeColorIndex =4
+            HoverTint =40.0
+            PressedThemeColorIndex =4
+            PressedShade =75.0
+            HoverForeThemeColorIndex =0
+            HoverForeTint =75.0
+            PressedForeThemeColorIndex =0
+            PressedForeTint =75.0
+        End
+        Begin CheckBox
+            BorderLineStyle =0
+            LabelX =230
+            LabelY =-30
+            BorderThemeColorIndex =1
+            BorderShade =65.0
+            GridlineThemeColorIndex =1
+            GridlineShade =65.0
+        End
+        Begin TextBox
+            AddColon = NotDefault
+            FELineBreak = NotDefault
+            BorderLineStyle =0
+            LabelX =-1800
+            FontSize =11
+            FontName ="Calibri"
+            AsianLineBreak =1
+            BackThemeColorIndex =1
+            BorderThemeColorIndex =1
+            BorderShade =65.0
+            ThemeFontIndex =1
+            ForeThemeColorIndex =0
+            ForeTint =75.0
+            GridlineThemeColorIndex =1
+            GridlineShade =65.0
+        End
+        Begin ComboBox
+            AddColon = NotDefault
+            BorderLineStyle =0
+            LabelX =-1800
+            FontSize =11
+            FontName ="Calibri"
+            AllowValueListEdits =1
+            InheritValueList =1
+            ThemeFontIndex =1
+            BackThemeColorIndex =1
+            BorderThemeColorIndex =1
+            BorderShade =65.0
+            ForeThemeColorIndex =2
+            ForeShade =50.0
+            GridlineThemeColorIndex =1
+            GridlineShade =65.0
+        End
+        Begin Section
+            Height =15915
+            BackColor =15130848
+            Name ="Detail"
+            AlternateBackColor =15130848
+            Begin
+                Begin Line
+                    BorderWidth =1
+                    OverlapFlags =85
+                    Left =60
+                    Top =4980
+                    Width =6420
+                    Name ="Line0"
+                    BorderThemeColorIndex =1
+                    BorderShade =75.0
+                End
+                Begin Label
+                    OverlapFlags =85
+                    Left =60
+                    Top =4620
+                    Width =6360
+                    Height =300
+                    FontWeight =700
+                    ForeColor =5324600
+                    Name ="Label1"
+                    Caption ="Debug and Logging"
+                    ForeThemeColorIndex =-1
+                    ForeTint =100.0
+                End
+                Begin CommandButton
+                    TabStop = NotDefault
+                    OverlapFlags =85
+                    Left =60
+                    Top =180
+                    Width =480
+                    Height =480
+                    Name ="cmdIcon"
+                    Caption ="Command2"
+                    ImageData = Begin
+                        0x2800000010000000100000000100200000000000000000000000000000000000 ,
+                        0x0000000000000000000000000000000000000000000000000000000000000000 ,
+                        0x0000000000000000000000000000000000000000000000000000000000000000 ,
+                        0x000000000000000000000000505050ff505050ff00000000505050ff505050ff ,
+                        0x00000000505050ff505050ff0000000000000000000000000000000000000000 ,
+                        0x000000000000000000000000505050ff505050ff00000000505050ff505050ff ,
+                        0x00000000505050ff505050ff0000000000000000000000000000000000000000 ,
+                        0x0000000000000000000000000000000000000000000000000000000000000000 ,
+                        0x0000000000000000000000000000000000000000000000000000000072727248 ,
+                        0x727272ff727272541c75e3261c75e3ff1c75e326000000000000000000000000 ,
+                        0x00000000000000000000000000000000000000000000000072727248727272f6 ,
+                        0x727272ff727272ff1c75e3ff000000001c75e3ff00000000000000001c75e326 ,
+                        0x1c75e3ff1c75e32600000000000000000000000072727248727272f6727272ff ,
+                        0x727272fc727272541c75e3261c75e3ff1c75e32600000000000000001c75e3ff ,
+                        0x000000001c75e3ff000000000000000072727248727272f6727272ff727272fc ,
+                        0x727272540000000000000000000000000000000000000000000000001c75e326 ,
+                        0x1c75e3ff1c75e3260000000072727248727272f6727272ff727272fc72727254 ,
+                        0x000000000000000000000000000000001c75e3261c75e3ff1c75e32600000000 ,
+                        0x000000000000000072727248727272f6727272ff727272fc7272725400000000 ,
+                        0x000000000000000000000000000000001c75e3ff000000001c75e3ff00000000 ,
+                        0x0000000072727248727272f6727272ff727272f9727272540000000000000000 ,
+                        0x000000000000000000000000000000001c75e3261c75e3ff1c75e32600000000 ,
+                        0x72727248727272f6727272ff727272f972727254000000000000000000000000 ,
+                        0x0000000000000000000000000000000000000000000000000000000072727248 ,
+                        0x727272f6ffffffff727272f97272725400000000000000000000000000000000 ,
+                        0x00000000000000000000000000000000000000000000000072727248727272f6 ,
+                        0xffffffff727272f9727272540000000000000000000000000000000000000000 ,
+                        0x000000000000000000000000000000000000000000000000727272ff727272ff ,
+                        0x727272f972727254000000000000000000000000000000000000000000000000 ,
+                        0x00000000000000000000000000000000000000000000000072727254727272ff ,
+                        0x7272725400000000000000000000000000000000000000000000000000000000 ,
+                        0x0000000000000000000000000000000000000000000000000000000000000000 ,
+                        0x0000000000000000000000000000000000000000000000000000000000000000 ,
+                        0x0000000000000000
+                    End
+                    BackStyle =0
+
+                    Gradient =0
+                    BorderWidth =1
+                    BorderThemeColorIndex =1
+                    BorderTint =100.0
+                    BorderShade =65.0
+                End
+                Begin Label
+                    OverlapFlags =85
+                    Left =720
+                    Top =240
+                    Width =5520
+                    Height =420
+                    FontSize =14
+                    ForeColor =5324600
+                    Name ="Label3"
+                    Caption ="Advanced options and settings"
+                    ForeThemeColorIndex =-1
+                    ForeTint =100.0
+                End
+                Begin Line
+                    BorderWidth =1
+                    OverlapFlags =85
+                    Left =60
+                    Top =12360
+                    Width =6420
+                    Name ="Line4"
+                    BorderThemeColorIndex =1
+                    BorderShade =75.0
+                End
+                Begin Label
+                    OverlapFlags =85
+                    Left =60
+                    Top =12000
+                    Width =6360
+                    Height =300
+                    FontWeight =700
+                    ForeColor =5324600
+                    Name ="Label5"
+                    Caption ="Translation"
+                    ForeThemeColorIndex =-1
+                    ForeTint =100.0
+                End
+                Begin CheckBox
+                    OverlapFlags =85
+                    Left =420
+                    Top =12775
+                    TabIndex =13
+                    Name ="chkContributeTranslations"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =12720
+                            Width =5580
+                            Height =360
+                            ForeColor =5324600
+                            Name ="Label256"
+                            Caption ="Contribute to Translations"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin Label
+                    OverlapFlags =85
+                    Left =720
+                    Top =13200
+                    Width =5580
+                    Height =480
+                    FontSize =10
+                    Name ="lblTranslationExplanation"
+                    Caption ="Check this box if you would like to help improve the translations."
+                    HorizontalAnchor =2
+                    ForeTint =50.0
+                End
+                Begin Line
+                    BorderWidth =1
+                    OverlapFlags =85
+                    Left =60
+                    Top =14400
+                    Width =6420
+                    Name ="Line6"
+                    BorderThemeColorIndex =1
+                    BorderShade =75.0
+                End
+                Begin Label
+                    OverlapFlags =85
+                    Left =60
+                    Top =14040
+                    Width =6360
+                    Height =300
+                    FontWeight =700
+                    ForeColor =5324600
+                    Name ="Label7"
+                    Caption ="Legacy Settings"
+                    ForeThemeColorIndex =-1
+                    ForeTint =100.0
+                End
+                Begin TextBox
+                    OverlapFlags =87
+                    IMESentenceMode =3
+                    Left =1920
+                    Top =5880
+                    Width =1260
+                    Height =315
+                    TabIndex =6
+                    Name ="txtMaxLogFiles"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =93
+                            Left =420
+                            Top =5880
+                            Width =1500
+                            Height =315
+                            ForeColor =5324600
+                            Name ="Label9"
+                            Caption ="Max Log Files:"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin Label
+                    OverlapFlags =85
+                    Left =420
+                    Top =6300
+                    Width =4140
+                    Height =300
+                    FontSize =10
+                    Name ="Label10"
+                    Caption ="Enter 0 to keep all log files"
+                    ForeTint =50.0
+                End
+                Begin CheckBox
+                    OverlapFlags =85
+                    Left =420
+                    Top =5340
+                    TabIndex =5
+                    Name ="chkBreakOnError"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =5280
+                            Width =2640
+                            Height =315
+                            ForeColor =5324600
+                            Name ="Label219"
+                            Caption ="Debug VBA Errors"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin CheckBox
+                    OverlapFlags =85
+                    Left =420
+                    Top =14640
+                    TabIndex =14
+                    Name ="chkShowVCSLegacy"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =14580
+                            Width =2640
+                            Height =315
+                            ForeColor =5324600
+                            Name ="Label215"
+                            Caption ="Show Legacy Prompts"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin Line
+                    BorderWidth =1
+                    OverlapFlags =85
+                    Left =60
+                    Top =7320
+                    Width =6420
+                    Name ="Line11"
+                    BorderThemeColorIndex =1
+                    BorderShade =75.0
+                End
+                Begin Label
+                    OverlapFlags =85
+                    Left =60
+                    Top =6960
+                    Width =6360
+                    Height =300
+                    FontWeight =700
+                    ForeColor =5324600
+                    Name ="Label12"
+                    Caption ="Export Tweaks"
+                    ForeThemeColorIndex =-1
+                    ForeTint =100.0
+                End
+                Begin CheckBox
+                    OverlapFlags =85
+                    Left =420
+                    Top =7560
+                    TabIndex =7
+                    Name ="chkStripPublishOption"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =7500
+                            Width =2640
+                            Height =315
+                            ForeColor =5324600
+                            Name ="Label14"
+                            Caption ="Strip Publish Option"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin CheckBox
+                    OverlapFlags =85
+                    Left =420
+                    Top =8040
+                    TabIndex =8
+                    Name ="chkPreserveRubberDuckID"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =7980
+                            Width =2640
+                            Height =315
+                            ForeColor =5324600
+                            Name ="Label16"
+                            Caption ="Preserve RubberDuck ID"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin CheckBox
+                    OverlapFlags =85
+                    Left =420
+                    Top =8520
+                    TabIndex =9
+                    Name ="chkSaveAllDocumentProperties"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =8460
+                            Width =2835
+                            Height =315
+                            ForeColor =5324600
+                            Name ="Label18"
+                            Caption ="Save All Document Properties"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin CheckBox
+                    OverlapFlags =85
+                    Left =420
+                    Top =9000
+                    TabIndex =10
+                    Name ="chkSaveLinkedTableDef"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =8940
+                            Width =2805
+                            Height =315
+                            ForeColor =5324600
+                            Name ="Label20"
+                            Caption ="Save Linked Table Definitions"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin CheckBox
+                    OverlapFlags =85
+                    Left =420
+                    Top =15120
+                    TabIndex =15
+                    Name ="chkShowDebug"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =15060
+                            Width =2640
+                            Height =315
+                            ForeColor =5324600
+                            Name ="Label23"
+                            Caption ="Show Detailed Output"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin CheckBox
+                    OverlapFlags =85
+                    Left =420
+                    Top =15600
+                    TabIndex =16
+                    Name ="chkUseShortHash"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =15540
+                            Width =2640
+                            Height =315
+                            ForeColor =5324600
+                            Name ="Label223"
+                            Caption ="Use short hashes in index"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin Line
+                    BorderWidth =1
+                    OverlapFlags =85
+                    Left =60
+                    Top =10140
+                    Width =6420
+                    Name ="Line21"
+                    BorderThemeColorIndex =1
+                    BorderShade =75.0
+                End
+                Begin Label
+                    OverlapFlags =85
+                    Left =60
+                    Top =9780
+                    Width =6360
+                    Height =300
+                    FontWeight =700
+                    ForeColor =5324600
+                    Name ="Label22"
+                    Caption ="System"
+                    ForeThemeColorIndex =-1
+                    ForeTint =100.0
+                End
+                Begin ComboBox
+                    RowSourceTypeInt =1
+                    OverlapFlags =85
+                    IMESentenceMode =3
+                    ListWidth =1440
+                    Left =2100
+                    Top =10380
+                    Width =1560
+                    Height =315
+                    TabIndex =11
+                    Name ="cboHashAlgorithm"
+                    RowSourceType ="Value List"
+                    RowSource ="\"SHA1\";\"SHA256\";\"SHA512\""
+                    AllowValueListEdits =0
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =420
+                            Top =10380
+                            Width =1560
+                            Height =315
+                            ForeColor =5324600
+                            Name ="Label221"
+                            Caption ="Hash Algorithm:"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin Label
+                    OverlapFlags =85
+                    Left =420
+                    Top =10800
+                    Width =5820
+                    Height =360
+                    FontSize =10
+                    Name ="Label24"
+                    Caption ="Some regulatory environments may restrict hash algorithms"
+                    ForeTint =50.0
+                End
+                Begin CheckBox
+                    Visible = NotDefault
+                    OverlapFlags =85
+                    Left =420
+                    Top =11400
+                    TabIndex =12
+                    Name ="chkUseGitIntegration"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =11340
+                            Width =2640
+                            Height =315
+                            ForeColor =5324600
+                            Name ="Label163"
+                            Caption ="Use Git Integration"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin Line
+                    BorderWidth =1
+                    OverlapFlags =85
+                    Left =60
+                    Top =1440
+                    Width =6420
+                    Name ="Line29"
+                    BorderThemeColorIndex =1
+                    BorderShade =75.0
+                End
+                Begin Label
+                    OverlapFlags =85
+                    Left =60
+                    Top =1080
+                    Width =6360
+                    Height =300
+                    FontWeight =700
+                    ForeColor =5324600
+                    Name ="Label30"
+                    Caption ="Automated Testing"
+                    ForeThemeColorIndex =-1
+                    ForeTint =100.0
+                End
+                Begin TextBox
+                    OverlapFlags =85
+                    IMESentenceMode =3
+                    Left =2340
+                    Top =1680
+                    Width =3420
+                    Height =315
+                    TabIndex =1
+                    Name ="txtDefaultTestFilter"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =420
+                            Top =1680
+                            Width =1740
+                            Height =315
+                            ForeColor =5324600
+                            Name ="Label32"
+                            Caption ="Default Test Filter"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin Label
+                    OverlapFlags =85
+                    Left =420
+                    Top =2100
+                    Width =5385
+                    Height =780
+                    FontSize =10
+                    Name ="Label33"
+                    Caption ="Specify module or tag name(s) to use when clicking the Run Tests button on the r"
+                        "ibbon. Prefix with \"-\" to exclude. Separate entries with comma. I.e. \"clsTest"
+                        "Functions, -slow\""
+                    ForeTint =50.0
+                End
+                Begin CheckBox
+                    OverlapFlags =85
+                    Left =420
+                    Top =3060
+                    TabIndex =2
+                    Name ="chkUseWebTestRunner"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =3060
+                            Width =5460
+                            Height =315
+                            ForeColor =5324600
+                            Name ="lblUseWebTestRunner"
+                            Caption ="Use HTML test runner (else legacy console)"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin CheckBox
+                    OverlapFlags =85
+                    Left =420
+                    Top =3480
+                    TabIndex =3
+                    Name ="chkExportTestResultsJUnit"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =3480
+                            Width =5460
+                            Height =300
+                            ForeColor =5324600
+                            Name ="lblExportTestResultsJUnit"
+                            Caption ="Export JUnit XML test results (for CI)"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+                Begin CheckBox
+                    OverlapFlags =85
+                    Left =420
+                    Top =3900
+                    TabIndex =4
+                    Name ="chkExportTestResultsHtml"
+
+                    Begin
+                        Begin Label
+                            OverlapFlags =85
+                            Left =720
+                            Top =3900
+                            Width =5460
+                            Height =300
+                            ForeColor =5324600
+                            Name ="lblExportTestResultsHtml"
+                            Caption ="Export HTML test results report (double-click to view)"
+                            ForeThemeColorIndex =-1
+                            ForeTint =100.0
+                        End
+                    End
+                End
+            End
+        End
+    End
+End
+CodeBehindForm
+' See "frmVCSOptionsAdvanced.cls"

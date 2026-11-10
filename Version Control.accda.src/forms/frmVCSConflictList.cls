@@ -7,6 +7,29 @@ Option Explicit
 
 
 '---------------------------------------------------------------------------------------
+' Procedure : cboResolution_AfterUpdate
+' Author    : Adam Waller
+' Date      : 5/5/2026
+' Purpose   : When the user sets a resolution on one file row, propagate it to all
+'           : rows for the same component (same ItemKey). This keeps resolution
+'           : atomic at the component level while allowing per-file diff visibility.
+'---------------------------------------------------------------------------------------
+'
+Private Sub cboResolution_AfterUpdate()
+    Dim strKey As String
+    strKey = Nz(Me!ItemKey)
+    ' Commit the edited row first so the DAO UPDATE below does not collide
+    ' with the form's dirty buffer (which triggers Access's write-conflict dialog).
+    If Me.Dirty Then Me.Dirty = False
+    If Len(strKey) > 0 And Not IsNull(Me.cboResolution) Then
+        CodeDb.Execute "UPDATE tblConflicts SET Resolution = " & Nz(Me.cboResolution, 0) & _
+            " WHERE ItemKey = """ & Replace(strKey, """", """""") & """", dbFailOnError
+        Me.Requery
+    End If
+End Sub
+
+
+'---------------------------------------------------------------------------------------
 ' Procedure : txtDiff_Click
 ' Author    : Adam Waller
 ' Date      : 5/27/2021
